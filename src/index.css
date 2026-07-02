@@ -1,0 +1,46 @@
+:root {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --text: #2b2630;
+  --text-soft: #746b7d;
+  --border: #eee7ee;
+
+  --red: #e8433f;
+  --red-dark: #c62e2b;
+  --gold: #f0a63c;
+  --jade: #1f9e83;
+  --jade-dark: #17795f;
+  --purple: #7c5cff;
+
+  --tiffany-bg: #d9f2ee;
+  --tiffany-border: #4fae9c;
+  --tiffany-text: #1d6e60;
+
+  --shadow-sm: 0 2px 8px rgba(43, 38, 48, 0.06);
+  --shadow-md: 0 12px 28px rgba(43, 38, 48, 0.1);
+
+  font: 16px/1.5 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: light;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+}
