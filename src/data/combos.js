@@ -1,5 +1,6 @@
 // 胡牌組合台數表（不含莊家／連莊，該項在畫面上獨立處理）
 // exclude: 與此牌型相斥或屬同一包含關係的牌型 id，選取時會自動移除清單中的這些項目
+// type: 'label' 為純文字分隔說明，不可選取、不參與台數與文字解析
 // 陣列順序即畫面上按鈕排列順序（四個一排）
 export const PATTERNS = [
   { id: '屁胡', tai: 0, type: 'toggle', exclude: ['平胡', '碰碰胡'] },
@@ -19,19 +20,22 @@ export const PATTERNS = [
 
   { id: '門風刻', tai: 1, type: 'toggle', exclude: ['小四喜', '大四喜'] },
   { id: '圈風刻', tai: 1, type: 'toggle', exclude: ['小四喜', '大四喜'] },
-  { id: '海底撈月', tai: 1, type: 'toggle', exclude: ['河底撈魚'] },
-  { id: '河底撈魚', tai: 1, type: 'toggle', exclude: ['海底撈月'] },
+  { id: '海底撈月', tai: 1, type: 'toggle', exclude: [] },
+  { id: '搶槓', tai: 1, type: 'toggle', exclude: ['槓上開花', '自摸'] },
 
-  { id: '不求人', tai: 1, type: 'toggle', exclude: ['門清一摸三', '全求人', '半求人'] },
-  { id: '全求人', tai: 2, type: 'toggle', exclude: ['自摸', '門清', '不求人', '半求人'] },
-  { id: '半求人', tai: 1, type: 'toggle', exclude: ['不求人', '全求人'] },
+  { id: '不求人', tai: 1, type: 'toggle', exclude: ['門清一摸三', '全求人'] },
+  { id: '全求人', tai: 2, type: 'toggle', exclude: ['自摸', '門清', '不求人'] },
   { id: '門清一摸三', tai: 3, type: 'toggle', exclude: ['門清', '自摸', '不求人'] },
+
+  { id: '開花店系列', type: 'label' },
 
   // 花牌（原「正花」）上限 2 張／人；花槓數到 2 與八仙過海互斥，於元件內另行鎖定
   { id: '花牌', tai: 1, type: 'count', max: 2 },
   { id: '花槓', tai: 1, type: 'count', max: 2 },
   { id: '七搶一', tai: 8, type: 'toggle', exclude: ['八仙過海'] },
   { id: '八仙過海', tai: 8, type: 'toggle', exclude: ['七搶一'] },
+
+  { id: '牌品好 人品自然好', type: 'label' },
 
   { id: '小三元', tai: 4, type: 'toggle', exclude: ['大三元', '紅中', '青發', '白板'] },
   { id: '大三元', tai: 8, type: 'toggle', exclude: ['小三元', '紅中', '青發', '白板'] },
@@ -51,10 +55,9 @@ export const PATTERNS = [
   { id: '人胡', tai: 16, type: 'toggle', exclude: ['地胡', '天胡'] },
   { id: '地胡', tai: 16, type: 'toggle', exclude: ['人胡', '天胡'] },
   { id: '天胡', tai: 24, type: 'toggle', exclude: ['人胡', '地胡'] },
-  { id: '搶槓', tai: 1, type: 'toggle', exclude: ['槓上開花', '自摸'] },
 ]
 
-export const PATTERN_MAP = new Map(PATTERNS.map((p) => [p.id, p]))
+export const PATTERN_MAP = new Map(PATTERNS.filter((p) => p.type !== 'label').map((p) => [p.id, p]))
 
 // 花槓數到 2 與八仙過海視為同一件事，兩者互鎖（不會被自動移除，而是禁止再選取對方）
 export const HUA_GANG_ID = '花槓'

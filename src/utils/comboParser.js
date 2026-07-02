@@ -24,7 +24,10 @@ export function cjkNumeralToInt(str) {
 const LIAN_ZHUANG_REGEX = /連([0-9零〇一兩二三四五六七八九十]+)拉([0-9零〇一兩二三四五六七八九十]+)/
 
 // 由長到短排序，避免短名稱（如「門清」）搶先吃掉長名稱（如「門清一摸三」）的字元
-const SORTED_PATTERN_IDS = [...PATTERNS.map((p) => p.id)].sort((a, b) => b.length - a.length)
+// label 只是畫面分隔說明，不能被解析成組合
+const SORTED_PATTERN_IDS = PATTERNS.filter((p) => p.type !== 'label')
+  .map((p) => p.id)
+  .sort((a, b) => b.length - a.length)
 
 function extractPatterns(text) {
   const found = []

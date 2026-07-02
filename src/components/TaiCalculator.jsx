@@ -25,6 +25,7 @@ export default function TaiCalculator() {
     const q = query.trim()
     if (q === '') return []
     return PATTERNS.filter((p) => {
+      if (p.type === 'label') return false
       if (p.type === 'toggle' && selectedSet.has(p.id)) return false
       return p.id.includes(q)
     })
@@ -96,32 +97,74 @@ export default function TaiCalculator() {
   return (
     <section className="panel">
       <h2 className="panel__title">🀄 計算台數</h2>
-      <p className="panel__hint">
-        胡牌組合表為範例資料，正式的組合及台數表之後會提供並整批替換。
-      </p>
 
-      <div className="field-row">
-        <div className="field">
-          <label htmlFor="di-input">底（元）</label>
+      <div className="settings-banner">
+        <div className="settings-banner__item">
+          <span className="settings-banner__label">底</span>
           <input
             id="di-input"
             type="number"
             min="0"
+            step="10"
             value={di}
             onChange={(e) => setDi(e.target.value)}
-            className="field__input"
+            className="settings-banner__input"
           />
         </div>
-        <div className="field">
-          <label htmlFor="tai-input">台（元／台）</label>
+        <div className="settings-banner__item">
+          <span className="settings-banner__label">台</span>
           <input
             id="tai-input"
             type="number"
             min="0"
+            step="10"
             value={tai}
             onChange={(e) => setTai(e.target.value)}
-            className="field__input"
+            className="settings-banner__input"
           />
+        </div>
+      </div>
+
+      <div className="result-banner">
+        <div className="result-banner__item">
+          <span className="result-banner__label">總台數</span>
+          <span className="result-banner__value">{totalTai} 台</span>
+        </div>
+        <div className="result-banner__item">
+          <span className="result-banner__label">總金額</span>
+          <span className="result-banner__value result-banner__value--money">
+            ${totalMoney.toLocaleString()}
+          </span>
+        </div>
+      </div>
+
+      <div className="dealer-panel">
+        <div className="dealer-panel__col">
+          <button
+            type="button"
+            className={`dealer-panel__toggle ${dealerActive ? 'dealer-panel__toggle--active' : ''}`}
+            onClick={() => setDealerActive((a) => !a)}
+          >
+            <span className="dealer-panel__name">👑 莊家</span>
+            <span className="dealer-panel__formula">2n＋1台</span>
+          </button>
+        </div>
+        <div className="dealer-panel__col">
+          <div className="dealer-panel__streak">
+            <label htmlFor="dealer-streak">連莊次數</label>
+            <input
+              id="dealer-streak"
+              type="number"
+              min="0"
+              value={dealerStreak}
+              onChange={(e) => {
+                const n = Math.max(0, Number(e.target.value) || 0)
+                setDealerStreak(n)
+                setDealerActive(true)
+              }}
+              className="field__input"
+            />
+          </div>
         </div>
       </div>
 
@@ -162,48 +205,14 @@ export default function TaiCalculator() {
         )}
       </div>
 
-      <div className="result-banner">
-        <div className="result-banner__item">
-          <span className="result-banner__label">總台數</span>
-          <span className="result-banner__value">{totalTai} 台</span>
-        </div>
-        <div className="result-banner__item">
-          <span className="result-banner__label">總金額</span>
-          <span className="result-banner__value result-banner__value--money">
-            ${totalMoney.toLocaleString()}
-          </span>
-        </div>
-      </div>
-
-      <div className="dealer-panel">
-        <button
-          type="button"
-          className={`dealer-panel__toggle ${dealerActive ? 'dealer-panel__toggle--active' : ''}`}
-          onClick={() => setDealerActive((a) => !a)}
-        >
-          <span>👑 莊家（2n＋1台）</span>
-        </button>
-        <div className="dealer-panel__streak">
-          <label htmlFor="dealer-streak">連莊次數</label>
-          <input
-            id="dealer-streak"
-            type="number"
-            min="0"
-            value={dealerStreak}
-            onChange={(e) => {
-              const n = Math.max(0, Number(e.target.value) || 0)
-              setDealerStreak(n)
-              setDealerActive(true)
-            }}
-            className="field__input"
-          />
-        </div>
-      </div>
-
       <h3 className="panel__subtitle">或直接點選組合</h3>
       <div className="combo-grid">
         {PATTERNS.map((combo) =>
-          combo.type === 'count' ? (
+          combo.type === 'label' ? (
+            <div key={combo.id} className="combo-grid__label">
+              <span>{combo.id}</span>
+            </div>
+          ) : combo.type === 'count' ? (
             <div key={combo.id} className="combo-button combo-button--count">
               <span className="combo-button__name">{combo.id}</span>
               <span className="combo-button__tai">+{combo.tai} 台／張</span>
