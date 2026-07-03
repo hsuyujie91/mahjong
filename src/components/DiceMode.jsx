@@ -8,6 +8,7 @@ const SEAT_LABELS = ['下方', '右邊', '上方', '左邊']
 export default function DiceMode({ room, roomCode }) {
   const dice = room.dice
   const [manual, setManual] = useState('')
+  const [nameEditOpen, setNameEditOpen] = useState(false)
 
   function dispatch(action) {
     return dispatchDice(roomCode, action)
@@ -74,7 +75,28 @@ export default function DiceMode({ room, roomCode }) {
         <span className="game-chip">第 {dice.majiang + 1} 將</span>
         <span className="game-chip">{WINDS[dice.roundWind]}風圈</span>
         <span className="game-chip game-chip--dealer">👑 莊家：{dice.names[dealerSeat]}</span>
+        <button type="button" className="game-chip game-chip--action" onClick={() => setNameEditOpen((v) => !v)}>
+          ✏️ 改名
+        </button>
       </div>
+
+      {nameEditOpen && (
+        <div className="name-editor">
+          <p className="name-editor__title">改暱稱（任何人都能改所有人的）</p>
+          <div className="game-names">
+            {dice.names.map((n, i) => (
+              <input
+                key={i}
+                className="field__input"
+                value={n}
+                maxLength={8}
+                onChange={(e) => dispatch({ type: 'DICE_SET_NAME', index: i, name: e.target.value })}
+                placeholder={`玩家${i + 1}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="field">
         <label>骰子點數總和</label>

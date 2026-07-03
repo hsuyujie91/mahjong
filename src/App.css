@@ -207,6 +207,42 @@
   color: var(--jade-dark);
 }
 
+.room-bar__action {
+  border: none;
+  background: transparent;
+  color: var(--jade-dark);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.game-chip--action {
+  cursor: pointer;
+  color: var(--jade-dark);
+  background: #eaf7f2;
+  border-color: #bfe8da;
+}
+
+.name-editor {
+  background: #faf7fb;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.name-editor__title {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-soft);
+  margin: 0 0 10px;
+}
+
+.name-editor .game-names {
+  margin: 0;
+}
+
 .dice-roll-result {
   margin: 14px 0 4px;
   text-align: center;

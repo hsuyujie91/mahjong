@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import GameSeatTable from './GameSeatTable.jsx'
 import { WINDS, diceBonus, drawerSeat, firstDealerWind, handResultToTaiSync, seatOfWind } from '../utils/gameRules.js'
-import { claimSeat, dispatchGame, hydrateGame, resetRoom, setTai } from '../hooks/useRoom.js'
+import { claimSeat, dispatchGame, hydrateGame, resetRoom, setPlayerName, setTai } from '../hooks/useRoom.js'
 
 const SEAT_PICK_LABELS = ['下方', '右邊', '上方', '左邊']
 const REL_CLASS = ['bottom', 'right', 'top', 'left']
@@ -13,6 +13,7 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
 
   const [viewerOverride, setViewerOverride] = useState(null)
   const [manual, setManual] = useState('')
+  const [nameEditOpen, setNameEditOpen] = useState(false)
   const [winPickerOpen, setWinPickerOpen] = useState(false)
   const [pendingWinChoice, setPendingWinChoice] = useState(null)
   const [drawConfirmOpen, setDrawConfirmOpen] = useState(false)
@@ -159,9 +160,30 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
       ) : amHost ? (
         <span className="room-bar__me">開桌者</span>
       ) : null}
+      <button type="button" className="room-bar__action" onClick={() => setNameEditOpen((v) => !v)}>
+        ✏️ 改名
+      </button>
       <button type="button" className="room-bar__leave" onClick={onLeave}>
         離開
       </button>
+    </div>
+  )
+
+  const nameEditor = nameEditOpen && (
+    <div className="name-editor">
+      <p className="name-editor__title">改暱稱（任何人都能改所有人的）</p>
+      <div className="game-names">
+        {state.names.map((n, i) => (
+          <input
+            key={i}
+            className="field__input"
+            value={n}
+            maxLength={8}
+            onChange={(e) => setPlayerName(roomCode, i, e.target.value)}
+            placeholder={`玩家${i + 1}`}
+          />
+        ))}
+      </div>
     </div>
   )
 
@@ -200,6 +222,7 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
       <section className="panel">
         {roomBar}
         {claimPrompt}
+        {nameEditor}
         <h2 className="panel__title">🎴 抽風位（1/3）</h2>
         {viewerSwitch}
         {state.drawTurn <= 3 ? (
@@ -253,6 +276,7 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
       <section className="panel">
         {roomBar}
         {claimPrompt}
+        {nameEditor}
         <h2 className="panel__title">🪑 選擇座位（2/3）</h2>
         {viewerSwitch}
         <p className="game-prompt">
@@ -283,9 +307,8 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
     )
   }
 
-  // ── 擲骰定第一個莊家 ──
+  // ── 擲骰定第一個莊家 ──（任何玩家都能擲，結果共享）
   if (state.phase === 'first-dealer') {
-    const canRoll = controllable(eastPlayer)
     const rolled = state.lastRollTotal !== null
     const firstWind = rolled ? firstDealerWind(state.lastRollTotal) : null
     const firstPlayer = rolled ? state.windOfPlayer.indexOf(firstWind) : -1
@@ -294,20 +317,15 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
       <section className="panel">
         {roomBar}
         {claimPrompt}
+        {nameEditor}
         <h2 className="panel__title">🎲 擲骰定莊（3/3）</h2>
         {viewerSwitch}
-        <p className="game-prompt">
-          {canRoll ? (
-            <>請 <strong>{state.names[eastPlayer]}</strong>（東風）擲骰子</>
-          ) : (
-            <>等待 <strong>{state.names[eastPlayer]}</strong>（東風）擲骰定莊</>
-          )}
-        </p>
-        {canRoll ? diceField('骰子點數總和') : <div className="waiting-note">🎲 等待東風擲骰…</div>}
+        <p className="game-prompt">四家已就座！擲骰子決定第一位莊家（任何人都可擲）</p>
+        {canAct && diceField('骰子點數總和')}
         {rollDetail}
         <GameSeatTable players={players} viewerSeat={state.seatOfPlayer[viewerPlayer]} dealerSeat={null} highlightSeat={highlight} centerText="東" />
         {rolled && <div className="banner banner--success">👑 {state.names[firstPlayer]}（{WINDS[firstWind]}風）為第一個莊家！</div>}
-        {rolled && canRoll && (
+        {rolled && canAct && (
           <button type="button" className="game-btn game-btn--primary game-btn--full" onClick={() => dispatch({ type: 'CONFIRM_FIRST_DEALER' })}>
             開始對局（東風圈）
           </button>
@@ -325,12 +343,12 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
   const rolled = state.lastRollTotal !== null
   const drawSeat = rolled ? drawerSeat(dealerSeat, state.lastRollTotal) : null
   const drawPlayer = drawSeat !== null ? state.seatOfPlayer.indexOf(drawSeat) : -1
-  const canRoll = controllable(dealerPlayer)
 
   return (
     <section className="panel">
       {roomBar}
       {claimPrompt}
+      {nameEditor}
       <h2 className="panel__title">🀅 對局中</h2>
 
       <div className="game-status">
@@ -341,7 +359,7 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
 
       {viewerSwitch}
 
-      {canRoll ? diceField(`骰子點數總和（莊家 ${state.names[dealerPlayer]}）`) : <div className="waiting-note">🎲 等待莊家 {state.names[dealerPlayer]} 擲骰…</div>}
+      {canAct && diceField(`骰子點數總和（莊家 ${state.names[dealerPlayer]}／任何人都可擲）`)}
       {rollDetail}
 
       <GameSeatTable players={players} viewerSeat={viewerSeat} dealerSeat={dealerSeat} highlightSeat={drawSeat} centerText={WINDS[state.roundWind]} />
