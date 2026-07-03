@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
+import Entry from './components/Entry.jsx'
 import FundsStatus from './components/FundsStatus.jsx'
 import GameMode from './components/GameMode.jsx'
 import TaiCalculator from './components/TaiCalculator.jsx'
+import WaitingRoom from './components/WaitingRoom.jsx'
+import { ensureAuth, firebaseReady } from './firebase.js'
+import { useRoom } from './hooks/useRoom.js'
 import './App.css'
 
 const TABS = [
@@ -10,92 +14,78 @@ const TABS = [
   { id: 'funds', label: '資金現狀', emoji: '💰' },
 ]
 
-const FUNDS_KEY = 'mahjong-funds-state'
-const TAI_SETTINGS_KEY = 'mahjong-tai-settings'
-const DEFAULT_NAMES = ['玩家1', '玩家2', '玩家3', '玩家4']
-const DEFAULT_DI = 20
-const DEFAULT_TAI = 10
-
-function initFunds() {
-  try {
-    const raw = localStorage.getItem(FUNDS_KEY)
-    if (raw) {
-      const saved = JSON.parse(raw)
-      if (Array.isArray(saved) && saved.length === 4) return saved
-    }
-  } catch {
-    // 存檔壞掉就重置資金
-  }
-  return [0, 0, 0, 0]
-}
-
-function initTaiSettings() {
-  try {
-    const raw = localStorage.getItem(TAI_SETTINGS_KEY)
-    if (raw) {
-      const saved = JSON.parse(raw)
-      if (saved && typeof saved.di !== 'undefined' && typeof saved.tai !== 'undefined') return saved
-    }
-  } catch {
-    // 存檔壞掉就用預設值
-  }
-  return { di: DEFAULT_DI, tai: DEFAULT_TAI }
-}
+const ROOM_KEY = 'mahjong-room-code'
 
 function App() {
+  const [uid, setUid] = useState(null)
+  const [authError, setAuthError] = useState('')
+  const [roomCode, setRoomCode] = useState(() => localStorage.getItem(ROOM_KEY) || null)
   const [activeTab, setActiveTab] = useState('game')
-  const [handSync, setHandSync] = useState(null)
-  const [settledHandId, setSettledHandId] = useState(null)
-  const [funds, setFunds] = useState(initFunds)
-  const [fundsNames, setFundsNames] = useState(DEFAULT_NAMES)
-  const [taiSettings, setTaiSettings] = useState(initTaiSettings)
 
   useEffect(() => {
-    localStorage.setItem(FUNDS_KEY, JSON.stringify(funds))
-  }, [funds])
+    if (!firebaseReady) return
+    ensureAuth()
+      .then(setUid)
+      .catch((e) => setAuthError(e.message || '連線失敗'))
+  }, [])
 
+  const { room, loading } = useRoom(uid ? roomCode : null)
+
+  function joinRoom(code) {
+    localStorage.setItem(ROOM_KEY, code)
+    setRoomCode(code)
+    setActiveTab('game')
+  }
+
+  function leaveRoom() {
+    localStorage.removeItem(ROOM_KEY)
+    setRoomCode(null)
+  }
+
+  // 房間被刪除／重置消失時，退回進入畫面
   useEffect(() => {
-    localStorage.setItem(TAI_SETTINGS_KEY, JSON.stringify(taiSettings))
-  }, [taiSettings])
+    if (roomCode && uid && !loading && room === null) {
+      localStorage.removeItem(ROOM_KEY)
+      setRoomCode(null)
+    }
+  }, [roomCode, uid, loading, room])
 
-  const handleHandResolved = useCallback((sync) => {
-    setHandSync(sync)
-    if (sync?.names) setFundsNames(sync.names)
-  }, [])
+  const claims = room?.claims || {}
+  const mySeatEntry = Object.entries(claims).find(([, u]) => u === uid)
+  const mySeat = mySeatEntry ? Number(mySeatEntry[0]) : null
 
-  // 重新開桌：資金與底／台設定一起歸零／回到預設值
-  const handleGameReset = useCallback(() => {
-    setFunds([0, 0, 0, 0])
-    setTaiSettings({ di: DEFAULT_DI, tai: DEFAULT_TAI })
-  }, [])
-
-  // 自摸：贏家收三家的錢；放槍：只有放槍者付錢給贏家；
-  // dealerSurcharge：一般玩家自摸時，莊家要多付一台的錢給贏家
-  const handleSettleMoney = useCallback(({ winner, loser, selfDraw, amount, dealerSurcharge }) => {
-    setFunds((prev) => {
-      const next = [...prev]
-      if (selfDraw) {
-        next[winner] += amount * 3
-        for (let i = 0; i < 4; i++) {
-          if (i !== winner) next[i] -= amount
-        }
-      } else {
-        next[winner] += amount
-        next[loser] -= amount
-      }
-      if (dealerSurcharge) {
-        next[dealerSurcharge.from] -= dealerSurcharge.amount
-        next[dealerSurcharge.to] += dealerSurcharge.amount
-      }
-      return next
-    })
-  }, [])
-
-  function resetFunds() {
-    if (window.confirm('確定要重置資金現狀嗎？所有玩家餘額會歸零。')) {
-      setFunds([0, 0, 0, 0])
+  function renderBody() {
+    if (!firebaseReady) {
+      return <section className="panel"><p className="game-hint">尚未設定 Firebase 連線。</p></section>
+    }
+    if (authError) {
+      return <section className="panel"><div className="banner banner--error">連線失敗：{authError}</div></section>
+    }
+    if (!uid) {
+      return <section className="panel"><p className="game-hint">連線中…</p></section>
+    }
+    if (!roomCode) {
+      return <Entry onJoined={joinRoom} />
+    }
+    if (loading || !room) {
+      return <section className="panel"><p className="game-hint">載入牌桌 {roomCode}…</p></section>
+    }
+    if (room.game.phase === 'lobby') {
+      return <WaitingRoom room={room} roomCode={roomCode} uid={uid} onLeave={leaveRoom} />
+    }
+    switch (activeTab) {
+      case 'game':
+        return <GameMode room={room} roomCode={roomCode} mySeat={mySeat} onLeave={leaveRoom} />
+      case 'tai':
+        return <TaiCalculator room={room} roomCode={roomCode} />
+      case 'funds':
+        return <FundsStatus funds={room.funds} names={room.game.names} />
+      default:
+        return null
     }
   }
+
+  const showTabs = firebaseReady && uid && roomCode && room && room.game.phase !== 'lobby'
 
   return (
     <div className="app">
@@ -106,35 +96,22 @@ function App() {
         <p className="app__subtitle">保安！可以讓人打了又打 打了又打的嗎！</p>
       </header>
 
-      <nav className="tabs">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`tabs__button ${activeTab === tab.id ? 'tabs__button--active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            <span>{tab.emoji}</span> {tab.label}
-          </button>
-        ))}
-      </nav>
+      {showTabs && (
+        <nav className="tabs">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`tabs__button ${activeTab === tab.id ? 'tabs__button--active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              <span>{tab.emoji}</span> {tab.label}
+            </button>
+          ))}
+        </nav>
+      )}
 
-      <main className="app__main">
-        {activeTab === 'game' && <GameMode onHandResolved={handleHandResolved} onGameReset={handleGameReset} />}
-        {activeTab === 'tai' && (
-          <TaiCalculator
-            handSync={handSync}
-            settledHandId={settledHandId}
-            onHandSettled={setSettledHandId}
-            onSettleMoney={handleSettleMoney}
-            di={taiSettings.di}
-            tai={taiSettings.tai}
-            onDiChange={(di) => setTaiSettings((prev) => ({ ...prev, di }))}
-            onTaiChange={(tai) => setTaiSettings((prev) => ({ ...prev, tai }))}
-          />
-        )}
-        {activeTab === 'funds' && <FundsStatus funds={funds} names={fundsNames} onReset={resetFunds} />}
-      </main>
+      <main className="app__main">{renderBody()}</main>
 
       <footer className="app__footer">🎋 Have fun and 胡牌大吉！</footer>
     </div>

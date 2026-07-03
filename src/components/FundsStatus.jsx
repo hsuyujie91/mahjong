@@ -1,6 +1,6 @@
 const formatMoney = (n) => `${n > 0 ? '+' : ''}${n.toLocaleString()}`
 
-export default function FundsStatus({ funds, names, onReset }) {
+export default function FundsStatus({ funds, names }) {
   const rows = names
     .map((name, i) => ({ name, balance: funds[i] || 0 }))
     .sort((a, b) => b.balance - a.balance)
@@ -9,7 +9,7 @@ export default function FundsStatus({ funds, names, onReset }) {
     <section className="panel">
       <h2 className="panel__title">💰 資金現狀</h2>
       <p className="game-hint">
-        玩家初始資金皆為零，開桌模式每局結算後，系統會自動從輸家扣款、加到贏家身上。
+        玩家初始資金皆為零，每局結算後系統會自動從輸家扣款、加到贏家身上。（重新開桌會歸零）
       </p>
 
       <div className="funds-list">
@@ -25,10 +25,6 @@ export default function FundsStatus({ funds, names, onReset }) {
             </span>
           </div>
         ))}
-      </div>
-
-      <div className="game-reset">
-        <button type="button" onClick={onReset}>重置資金</button>
       </div>
     </section>
   )

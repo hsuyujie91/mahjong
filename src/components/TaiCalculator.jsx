@@ -1,47 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { PATTERNS, PATTERN_MAP } from '../data/combos.js'
 import { applyPatternIds, parseComboInput } from '../utils/comboParser.js'
+import { handResultToTaiSync } from '../utils/gameRules.js'
+import { claimSettlement, patchTai, setTai, settleFunds } from '../hooks/useRoom.js'
 
 const COUNT_PATTERNS = PATTERNS.filter((p) => p.type === 'count')
 const TOGGLE_PATTERNS = PATTERNS.filter((p) => p.type === 'toggle')
 
-export default function TaiCalculator({
-  handSync,
-  settledHandId,
-  onHandSettled,
-  onSettleMoney,
-  di,
-  tai,
-  onDiChange,
-  onTaiChange,
-}) {
+export default function TaiCalculator({ room, roomCode }) {
+  const tai = room.tai
+  const { di, tai: taiUnit, selectedIds, counts, dealerActive, dealerStreak, diceBonusLit } = tai
+
   const [query, setQuery] = useState('')
-  const [selectedIds, setSelectedIds] = useState([])
-  const [counts, setCounts] = useState({})
-  const [dealerActive, setDealerActive] = useState(false)
-  const [dealerStreak, setDealerStreak] = useState(0)
-  const [diceBonusLit, setDiceBonusLit] = useState(null)
   const [zimoConfirmOpen, setZimoConfirmOpen] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const inputRef = useRef(null)
 
-  // 開桌模式每局結算（胡牌／流局）後會推送莊家連莊、骰子加成、是否自摸，這裡自動帶入
-  useEffect(() => {
-    if (!handSync) return
-    setDealerActive(handSync.dealerActive)
-    setDealerStreak(handSync.dealerStreak)
-    setDiceBonusLit(handSync.diceBonus)
-    if (handSync.selfDraw) {
-      activateToggles(['自摸'])
-    } else {
-      setSelectedIds((prev) => prev.filter((x) => x !== '自摸'))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handSync?.id])
+  const handSync = handResultToTaiSync(room.game.lastHandResult, room.game.names)
+  const settledHandId = room.settledHandId
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
 
-  // 哪些已選的牌型會鎖住某個計數型（花牌／花槓）不能再加
   function lockingTogglesFor(countId) {
     return TOGGLE_PATTERNS.filter((p) => p.excludeCounts?.includes(countId) && selectedSet.has(p.id))
   }
@@ -65,80 +44,42 @@ export default function TaiCalculator({
   const toggleTai = selectedToggleCombos.reduce((sum, combo) => sum + combo.tai, 0)
   const countTai = COUNT_PATTERNS.reduce((sum, p) => sum + p.tai * (counts[p.id] || 0), 0)
   const baseTai = dealerTai + toggleTai + countTai
-  // 骰盅（+2台）／豹子（×2台）／紅豹（×3台）套用在基礎台數之上
   let totalTai = baseTai
   if (diceBonusLit?.label === '骰盅') totalTai = baseTai + 2
   else if (diceBonusLit?.label === '豹子') totalTai = baseTai * 2
   else if (diceBonusLit?.label === '紅豹') totalTai = baseTai * 3
-  const totalMoney = Number(di || 0) + totalTai * Number(tai || 0)
+  const totalMoney = Number(di || 0) + totalTai * Number(taiUnit || 0)
 
   const pendingSettlement = handSync && handSync.winner !== null && handSync.id !== settledHandId
-
-  // 資金用的自摸判定：若原本就沒有記錄放槍者（真自摸，loser 為 null），沒有人可以扣款，
-  // 只能維持自摸算法；有放槍者時才依「自摸」勾選狀態決定要用自摸還是放槍的算法（供手動更正用）
   const selfDrawForMoney = handSync && handSync.loser === null ? true : selectedSet.has('自摸')
-
-  // 一般玩家自摸時，莊家（若非贏家）要多付一台的錢給自摸玩家
   const dealerSurcharge =
     pendingSettlement && selfDrawForMoney && handSync.dealerPlayer >= 0 && handSync.dealerPlayer !== handSync.winner
-      ? { from: handSync.dealerPlayer, to: handSync.winner, amount: Number(tai || 0) }
+      ? { from: handSync.dealerPlayer, to: handSync.winner, amount: Number(taiUnit || 0) }
       : null
 
-  // 結算：清空已勾選的組合台數（花牌／花槓計數、莊家勾選、骰子加成燈號也一併歸零），
-  // 底、台金額、連莊次數設定過就不會被結算動到。
-  // 若這局有勝負（開桌模式同步過來的最新一局尚未結算過金額），順便自動過帳：
-  // 自摸由贏家收三家的錢，放槍只有放槍者付錢給贏家，莊家自摸時另外多收一台差額
-  function settleUp() {
-    if (pendingSettlement) {
-      onSettleMoney?.({
-        winner: handSync.winner,
-        loser: handSync.loser,
-        selfDraw: selfDrawForMoney,
-        amount: totalMoney,
-        dealerSurcharge,
-      })
-      onHandSettled?.(handSync.id)
-    }
-    setSelectedIds([])
-    setCounts({})
-    setDealerActive(false)
-    setDiceBonusLit(null)
-  }
-
-  // 啟用一批牌型：套用互斥／連帶規則，並將與其相斥的花牌、花槓計數歸零
-  // （選取牌型永遠允許，不會被既有的計數鎖住 —— 鎖住的是計數的「＋」，見 lockingTogglesFor）
+  // 啟用一批牌型（套用互斥規則、歸零相斥的花牌計數），計算完寫回共享狀態
   function activateToggles(ids) {
     const validIds = ids.filter((id) => PATTERN_MAP.get(id))
     if (validIds.length === 0) return
-
-    const countsToReset = new Set()
+    const nextSelected = applyPatternIds(selectedIds, validIds)
+    const nextCounts = { ...counts }
     validIds.forEach((id) => {
       if (selectedSet.has(id)) return
-      const pattern = PATTERN_MAP.get(id)
-      pattern.excludeCounts?.forEach((cid) => countsToReset.add(cid))
-    })
-
-    setSelectedIds((prev) => applyPatternIds(prev, validIds))
-    if (countsToReset.size > 0) {
-      setCounts((prev) => {
-        const next = { ...prev }
-        countsToReset.forEach((cid) => {
-          next[cid] = 0
-        })
-        return next
+      PATTERN_MAP.get(id).excludeCounts?.forEach((cid) => {
+        nextCounts[cid] = 0
       })
-    }
+    })
+    patchTai(roomCode, { selectedIds: nextSelected, counts: nextCounts })
   }
 
   function toggleCombo(id) {
     if (selectedSet.has(id)) {
-      setSelectedIds((prev) => prev.filter((x) => x !== id))
+      patchTai(roomCode, { selectedIds: selectedIds.filter((x) => x !== id) })
       return
     }
     activateToggles([id])
   }
 
-  // 「自摸」牽動資金算法，取消或補選都要先確認，避免誤觸改變輸贏金額
   function handleZimoClick() {
     if (selectedSet.has('自摸')) {
       if (window.confirm('確定要取消自摸嗎？')) toggleCombo('自摸')
@@ -156,25 +97,16 @@ export default function TaiCalculator({
     setZimoConfirmOpen(false)
   }
 
-  function confirmZimoNo() {
-    setZimoConfirmOpen(false)
-  }
-
   function changeCount(id, delta) {
     if (delta > 0 && lockingTogglesFor(id).length > 0) return
     const max = PATTERN_MAP.get(id).max
-    setCounts((prev) => {
-      const next = Math.min(max, Math.max(0, (prev[id] || 0) + delta))
-      return { ...prev, [id]: next }
-    })
+    const next = Math.min(max, Math.max(0, (counts[id] || 0) + delta))
+    patchTai(roomCode, { counts: { ...counts, [id]: next } })
   }
 
   function handleSuggestionClick(pattern) {
-    if (pattern.type === 'count') {
-      changeCount(pattern.id, 1)
-    } else {
-      activateToggles([pattern.id])
-    }
+    if (pattern.type === 'count') changeCount(pattern.id, 1)
+    else activateToggles([pattern.id])
     setQuery('')
     setShowSuggestions(false)
     inputRef.current?.focus()
@@ -182,18 +114,11 @@ export default function TaiCalculator({
 
   function submitInput() {
     const { found, leftover, dealerStreak: parsedStreak } = parseComboInput(query)
-
-    if (parsedStreak !== null) {
-      setDealerActive(true)
-      setDealerStreak(parsedStreak)
-    }
-
+    if (parsedStreak !== null) patchTai(roomCode, { dealerActive: true, dealerStreak: parsedStreak })
     const toggleIds = found.filter((id) => PATTERN_MAP.get(id)?.type === 'toggle')
     const countIds = found.filter((id) => PATTERN_MAP.get(id)?.type === 'count')
-
     if (toggleIds.length > 0) activateToggles(toggleIds)
     countIds.forEach((id) => changeCount(id, 1))
-
     setQuery(leftover)
     setShowSuggestions(false)
   }
@@ -203,6 +128,40 @@ export default function TaiCalculator({
       e.preventDefault()
       submitInput()
     }
+  }
+
+  // 結算：先用交易認領這局的結算權（避免多台重複扣款）→ 過帳資金 → 清空台數狀態
+  async function settleUp() {
+    if (pendingSettlement) {
+      const won = await claimSettlement(roomCode, handSync.id)
+      if (won) {
+        const amount = totalMoney
+        await settleFunds(roomCode, (funds) => {
+          const next = [...funds]
+          if (selfDrawForMoney) {
+            next[handSync.winner] += amount * 3
+            for (let i = 0; i < 4; i++) if (i !== handSync.winner) next[i] -= amount
+          } else {
+            next[handSync.winner] += amount
+            next[handSync.loser] -= amount
+          }
+          if (dealerSurcharge) {
+            next[dealerSurcharge.from] -= dealerSurcharge.amount
+            next[dealerSurcharge.to] += dealerSurcharge.amount
+          }
+          return next
+        })
+      }
+    }
+    setTai(roomCode, {
+      di,
+      tai: taiUnit,
+      selectedIds: [],
+      counts: {},
+      dealerActive: false,
+      dealerStreak,
+      diceBonusLit: null,
+    })
   }
 
   return (
@@ -218,7 +177,7 @@ export default function TaiCalculator({
             min="0"
             step="10"
             value={di}
-            onChange={(e) => onDiChange?.(e.target.value)}
+            onChange={(e) => patchTai(roomCode, { di: e.target.value })}
             className="settings-banner__input"
           />
         </div>
@@ -229,8 +188,8 @@ export default function TaiCalculator({
             type="number"
             min="0"
             step="10"
-            value={tai}
-            onChange={(e) => onTaiChange?.(e.target.value)}
+            value={taiUnit}
+            onChange={(e) => patchTai(roomCode, { tai: e.target.value })}
             className="settings-banner__input"
           />
         </div>
@@ -241,7 +200,7 @@ export default function TaiCalculator({
           <button
             type="button"
             className={`dealer-panel__toggle ${dealerActive ? 'dealer-panel__toggle--active' : ''}`}
-            onClick={() => setDealerActive((a) => !a)}
+            onClick={() => patchTai(roomCode, { dealerActive: !dealerActive })}
           >
             <span className="dealer-panel__name">👑 莊家</span>
             <span className="dealer-panel__formula">2n＋1台</span>
@@ -257,8 +216,7 @@ export default function TaiCalculator({
               value={dealerStreak}
               onChange={(e) => {
                 const n = Math.max(0, Number(e.target.value) || 0)
-                setDealerStreak(n)
-                setDealerActive(true)
+                patchTai(roomCode, { dealerStreak: n, dealerActive: true })
               }}
               className="field__input"
             />
@@ -274,9 +232,7 @@ export default function TaiCalculator({
           </div>
           <div className="result-banner__item">
             <span className="result-banner__label">總金額</span>
-            <span className="result-banner__value result-banner__value--money">
-              ${totalMoney.toLocaleString()}
-            </span>
+            <span className="result-banner__value result-banner__value--money">${totalMoney.toLocaleString()}</span>
           </div>
         </div>
         <button type="button" className="result-banner__settle" onClick={settleUp}>
@@ -296,14 +252,14 @@ export default function TaiCalculator({
       )}
 
       {zimoConfirmOpen && (
-        <div className="modal-overlay" onClick={confirmZimoNo}>
+        <div className="modal-overlay" onClick={() => setZimoConfirmOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <p className="modal-card__title">你幹嘛 剛剛真的有自摸嗎？</p>
             <div className="zimo-confirm__actions">
               <button type="button" className="zimo-confirm__yes" onClick={confirmZimoYes}>
                 真的自摸
               </button>
-              <button type="button" className="zimo-confirm__no" onClick={confirmZimoNo}>
+              <button type="button" className="zimo-confirm__no" onClick={() => setZimoConfirmOpen(false)}>
                 取消
               </button>
             </div>
@@ -321,10 +277,7 @@ export default function TaiCalculator({
       <h3 className="panel__subtitle">直接點選組合</h3>
       <div className="combo-grid">
         {PATTERNS.map((combo) => {
-          if (combo.type === 'break') {
-            return <div key={combo.id} className="combo-grid__break" />
-          }
-
+          if (combo.type === 'break') return <div key={combo.id} className="combo-grid__break" />
           if (combo.type === 'label') {
             return (
               <div key={combo.id} className="combo-grid__label">
@@ -332,7 +285,6 @@ export default function TaiCalculator({
               </div>
             )
           }
-
           if (combo.type === 'count') {
             const lockedBy = lockingTogglesFor(combo.id)
             const isLocked = lockedBy.length > 0
@@ -355,14 +307,11 @@ export default function TaiCalculator({
                   </button>
                 </div>
                 {isLocked && (
-                  <span className="combo-button__lock-note">
-                    已選{lockedBy.map((p) => p.id).join('、')}，鎖定
-                  </span>
+                  <span className="combo-button__lock-note">已選{lockedBy.map((p) => p.id).join('、')}，鎖定</span>
                 )}
               </div>
             )
           }
-
           const isSelected = selectedSet.has(combo.id)
           return (
             <button

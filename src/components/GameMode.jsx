@@ -1,42 +1,19 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import GameSeatTable from './GameSeatTable.jsx'
-import {
-  WINDS,
-  createInitialState,
-  diceBonus,
-  drawerSeat,
-  firstDealerWind,
-  gameReducer,
-  seatOfWind,
-} from '../utils/gameRules.js'
+import { WINDS, diceBonus, drawerSeat, firstDealerWind, handResultToTaiSync, seatOfWind } from '../utils/gameRules.js'
+import { dispatchGame, hydrateGame, resetRoom, setTai } from '../hooks/useRoom.js'
 
-const STORAGE_KEY = 'mahjong-game-state'
 const SEAT_PICK_LABELS = ['下方', '右邊', '上方', '左邊']
 const REL_CLASS = ['bottom', 'right', 'top', 'left']
 
-function initState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const saved = JSON.parse(raw)
-      if (saved?.v === 1 && saved.phase) return saved
-    }
-  } catch {
-    // 存檔壞掉就重開一桌
-  }
-  return createInitialState()
-}
-
-export default function GameMode({ onHandResolved, onGameReset }) {
-  const [state, dispatch] = useReducer(gameReducer, undefined, initState)
-  const [viewerOverride, setViewerOverride] = useState(null)
+export default function GameMode({ room, roomCode, mySeat, onLeave }) {
+  const state = room.game
   const [winPickerOpen, setWinPickerOpen] = useState(false)
   const [pendingWinChoice, setPendingWinChoice] = useState(null)
   const [drawConfirmOpen, setDrawConfirmOpen] = useState(false)
   const winPickerRef = useRef(null)
   const drawConfirmRef = useRef(null)
 
-  // 點選單以外的地方時，胡牌／流局選單自動收合回原始按鈕
   useEffect(() => {
     if (!winPickerOpen) return
     function handleClickOutside(e) {
@@ -55,62 +32,19 @@ export default function GameMode({ onHandResolved, onGameReset }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [drawConfirmOpen])
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  }, [state])
-
-  // 每局結算（胡牌／流局）後，把莊家連莊、骰子加成、胡牌輸贏名單同步給計算台數頁面。
-  // 莊家台是否套用分三種情況：
-  // 1. 莊家自己胡牌（自摸或放槍皆算）→ 套用，n 用贏牌後的連莊數
-  // 2. 一般玩家胡牌、莊家放槍 → 仍套用莊家台，但 n 用這局開打前（莊家换人前）的連莊數
-  // 3. 一般玩家自摸 → 不套用莊家台（金額另外在結算時處理莊家多付的部分，見 TaiCalculator）
-  useEffect(() => {
-    if (!state.lastHandResult || !onHandResolved) return
-    const result = state.lastHandResult
-
-    let dealerActive = result.dealerContinued
-    let dealerStreak = result.dealerStreak
-    if (
-      result.type === 'win' &&
-      !result.selfDraw &&
-      result.winner !== result.dealerPlayerAtHand &&
-      result.loser === result.dealerPlayerAtHand
-    ) {
-      dealerActive = true
-      dealerStreak = result.dealerStreakBefore
-    }
-
-    onHandResolved({
-      id: result.id,
-      dealerActive,
-      dealerStreak,
-      diceBonus: result.diceBonus,
-      winner: result.type === 'win' ? result.winner : null,
-      loser: result.type === 'win' ? result.loser : null,
-      selfDraw: result.type === 'win' ? result.selfDraw : false,
-      dealerPlayer: result.dealerPlayerAtHand,
-      names: state.names,
-    })
-  }, [state.lastHandResult, onHandResolved, state.names])
-
   const eastPlayer = state.windOfPlayer.indexOf(0)
   const dealerPlayer = state.dealerWind === null ? -1 : state.windOfPlayer.indexOf(state.dealerWind)
-
-  // 換莊時視角自動跟著新莊家（手機交給莊家擲骰）
-  useEffect(() => {
-    if (state.phase === 'play' && dealerPlayer >= 0) setViewerOverride(dealerPlayer)
-  }, [state.phase, dealerPlayer])
-
-  const viewerPlayer = viewerOverride ?? (dealerPlayer >= 0 ? dealerPlayer : eastPlayer)
+  // 觀戰者（沒認領座位）視角預設看莊家
+  const viewerPlayer = mySeat != null ? mySeat : dealerPlayer >= 0 ? dealerPlayer : 0
 
   const seated = state.seatOfPlayer.every((s) => s !== null)
   const players = seated
-    ? state.names.map((name, i) => ({
-        name,
-        wind: WINDS[state.windOfPlayer[i]],
-        seat: state.seatOfPlayer[i],
-      }))
+    ? state.names.map((name, i) => ({ name, wind: WINDS[state.windOfPlayer[i]], seat: state.seatOfPlayer[i] }))
     : []
+
+  function dispatch(action) {
+    return dispatchGame(roomCode, action)
+  }
 
   function rollDice() {
     const dice = [1, 2, 3].map(() => Math.floor(Math.random() * 6) + 1)
@@ -119,11 +53,25 @@ export default function GameMode({ onHandResolved, onGameReset }) {
   }
 
   function resetGame() {
-    if (window.confirm('確定要重新開桌嗎？目前的牌局紀錄會清空。')) {
-      setViewerOverride(null)
-      dispatch({ type: 'RESET' })
-      onGameReset?.()
+    if (window.confirm('確定要重新開桌嗎？目前的牌局紀錄會清空（座位保留）。')) {
+      resetRoom(roomCode)
     }
+  }
+
+  // 胡牌／流局結算後，把莊家連莊、骰子加成、自摸等資訊寫進共享的計算台數狀態
+  async function syncTaiFromResult(txnResult) {
+    const game = hydrateGame(txnResult?.snapshot?.val())
+    const sync = handResultToTaiSync(game.lastHandResult, game.names)
+    if (!sync) return
+    await setTai(roomCode, {
+      di: room.tai.di,
+      tai: room.tai.tai,
+      dealerActive: sync.dealerActive,
+      dealerStreak: sync.dealerStreak,
+      diceBonusLit: sync.diceBonus,
+      selectedIds: sync.selfDraw ? ['自摸'] : [],
+      counts: {},
+    })
   }
 
   function openWinPicker() {
@@ -136,21 +84,19 @@ export default function GameMode({ onHandResolved, onGameReset }) {
     setPendingWinChoice(null)
   }
 
-  function confirmWin() {
-    if (pendingWinChoice === null) return
+  async function confirmWin() {
+    if (pendingWinChoice === null || mySeat == null) return
     const loser = pendingWinChoice === 'self' ? null : pendingWinChoice
-    dispatch({ type: 'WIN_HAND', winner: viewerPlayer, loser, selfDraw: pendingWinChoice === 'self' })
+    const res = await dispatch({ type: 'WIN_HAND', winner: mySeat, loser, selfDraw: pendingWinChoice === 'self' })
     setWinPickerOpen(false)
     setPendingWinChoice(null)
+    await syncTaiFromResult(res)
   }
 
-  function openDrawConfirm() {
-    setDrawConfirmOpen(true)
-  }
-
-  function confirmDraw() {
-    dispatch({ type: 'DRAW_HAND' })
+  async function confirmDraw() {
+    const res = await dispatch({ type: 'DRAW_HAND' })
     setDrawConfirmOpen(false)
+    await syncTaiFromResult(res)
   }
 
   const diceField = (labelText) => (
@@ -174,52 +120,46 @@ export default function GameMode({ onHandResolved, onGameReset }) {
     </p>
   )
 
-  // ── 開桌（輸入名字）──
-  if (state.phase === 'lobby') {
-    return (
-      <section className="panel">
-        <h2 className="panel__title">🎴 開桌模式</h2>
-        <p className="game-hint">
-          請依序抽風位 → 選座 → 擲骰定莊，請四位玩家用同一支手機輪流操作，系統會記錄座位、莊家輪替及圈風，設定後畫面下方座位即代表玩家本人。
-        </p>
-        <div className="game-names">
-          {state.names.map((n, i) => (
-            <input
-              key={i}
-              className="field__input"
-              value={n}
-              maxLength={8}
-              onChange={(e) => dispatch({ type: 'SET_NAME', index: i, name: e.target.value })}
-              placeholder={`玩家${i + 1}`}
-            />
-          ))}
-        </div>
-        <button type="button" className="game-btn game-btn--primary game-btn--full" onClick={() => dispatch({ type: 'START_DRAW' })}>
-          開始抽風位
-        </button>
-      </section>
-    )
-  }
+  const roomBar = (
+    <div className="room-bar">
+      <span className="room-bar__code">房號 {roomCode}</span>
+      {mySeat != null && <span className="room-bar__me">你是 {state.names[mySeat]}</span>}
+      <button type="button" className="room-bar__leave" onClick={onLeave}>
+        離開
+      </button>
+    </div>
+  )
 
-  // ── 抽風位 ──
+  // ── 抽風位 ──（輪到自己時才能抽）
   if (state.phase === 'draw') {
+    const myTurn = mySeat != null && state.drawTurn === mySeat
     return (
       <section className="panel">
+        {roomBar}
         <h2 className="panel__title">🎴 抽風位（1/3）</h2>
         {state.drawTurn <= 3 ? (
           <p className="game-prompt">
-            請 <strong>{state.names[state.drawTurn]}</strong> 點選一張蓋牌（{state.drawTurn + 1}／4）
+            {myTurn ? (
+              <>
+                輪到你了，<strong>{state.names[state.drawTurn]}</strong> 請點一張蓋牌（{state.drawTurn + 1}／4）
+              </>
+            ) : (
+              <>
+                等待 <strong>{state.names[state.drawTurn]}</strong> 抽風位（{state.drawTurn + 1}／4）
+              </>
+            )}
           </p>
         ) : (
           <p className="game-prompt">四家風位抽好了！</p>
         )}
         <div className="wind-tiles">
           {[0, 1, 2, 3].map((t) =>
-            state.tileTakenBy[t] === null ? (
+            state.tileTakenBy[t] == null ? (
               <button
                 key={t}
                 type="button"
                 className="wind-tile wind-tile--down"
+                disabled={!myTurn}
                 onClick={() => dispatch({ type: 'DRAW_TILE', tile: t })}
                 aria-label={`蓋牌${t + 1}`}
               >
@@ -245,13 +185,19 @@ export default function GameMode({ onHandResolved, onGameReset }) {
     )
   }
 
-  // ── 東風選座 ──
+  // ── 東風選座 ──（只有東風玩家能選）
   if (state.phase === 'seat') {
+    const isEast = mySeat === eastPlayer
     return (
       <section className="panel">
+        {roomBar}
         <h2 className="panel__title">🪑 選擇座位（2/3）</h2>
         <p className="game-prompt">
-          請 <strong>{state.names[eastPlayer]}</strong>（抽到東風）選擇想坐的位子
+          {isEast ? (
+            <>請 <strong>{state.names[eastPlayer]}</strong>（你，抽到東風）選擇想坐的位子</>
+          ) : (
+            <>等待 <strong>{state.names[eastPlayer]}</strong>（東風）選位子</>
+          )}
         </p>
         <div className="seat-table seat-table--game">
           <div className="seat-table__center seat-table__center--wind">東</div>
@@ -260,6 +206,7 @@ export default function GameMode({ onHandResolved, onGameReset }) {
               key={s}
               type="button"
               className={`seat-table__seat seat-table__seat--${REL_CLASS[s]} seat-table__seat--pick`}
+              disabled={!isEast}
               onClick={() => dispatch({ type: 'PICK_SEAT', seat: s })}
             >
               {SEAT_PICK_LABELS[s]}
@@ -273,33 +220,37 @@ export default function GameMode({ onHandResolved, onGameReset }) {
     )
   }
 
-  // ── 擲骰定第一個莊家 ──
+  // ── 擲骰定第一個莊家 ──（只有東風玩家能擲、能確認）
   if (state.phase === 'first-dealer') {
+    const isEast = mySeat === eastPlayer
     const rolled = state.lastRollTotal !== null
     const firstWind = rolled ? firstDealerWind(state.lastRollTotal) : null
     const firstPlayer = rolled ? state.windOfPlayer.indexOf(firstWind) : -1
     const highlight = rolled ? seatOfWind(firstWind, state.eastSeat) : null
     return (
       <section className="panel">
+        {roomBar}
         <h2 className="panel__title">🎲 擲骰定莊（3/3）</h2>
         <p className="game-prompt">
-          四家已就座！請由 <strong>{state.names[eastPlayer]}</strong>（東風）擲骰子
+          {isEast ? (
+            <>四家已就座！請由你（<strong>{state.names[eastPlayer]}</strong>，東風）擲骰子</>
+          ) : (
+            <>等待 <strong>{state.names[eastPlayer]}</strong>（東風）擲骰定莊</>
+          )}
         </p>
-        {diceField('骰子點數總和')}
+        {isEast ? diceField('骰子點數總和') : <div className="waiting-note">🎲 等待莊家擲骰…</div>}
         {rollDetail}
         <GameSeatTable
           players={players}
-          viewerSeat={state.seatOfPlayer[eastPlayer]}
+          viewerSeat={state.seatOfPlayer[viewerPlayer]}
           dealerSeat={null}
           highlightSeat={highlight}
           centerText="東"
         />
         {rolled && (
-          <div className="banner banner--success">
-            👑 {state.names[firstPlayer]}（{WINDS[firstWind]}風）為第一個莊家！
-          </div>
+          <div className="banner banner--success">👑 {state.names[firstPlayer]}（{WINDS[firstWind]}風）為第一個莊家！</div>
         )}
-        {rolled && (
+        {rolled && isEast && (
           <button
             type="button"
             className="game-btn game-btn--primary game-btn--full"
@@ -321,9 +272,12 @@ export default function GameMode({ onHandResolved, onGameReset }) {
   const rolled = state.lastRollTotal !== null
   const drawSeat = rolled ? drawerSeat(dealerSeat, state.lastRollTotal) : null
   const drawPlayer = drawSeat !== null ? state.seatOfPlayer.indexOf(drawSeat) : -1
+  const isDealer = mySeat === dealerPlayer
+  const canAct = mySeat != null
 
   return (
     <section className="panel">
+      {roomBar}
       <h2 className="panel__title">🀅 對局中</h2>
 
       <div className="game-status">
@@ -332,21 +286,11 @@ export default function GameMode({ onHandResolved, onGameReset }) {
         <span className="game-chip game-chip--dealer">👑 莊家：{state.names[dealerPlayer]}</span>
       </div>
 
-      <div className="viewer-switch">
-        <span className="viewer-switch__label">我的視角</span>
-        {state.names.map((n, i) => (
-          <button
-            key={i}
-            type="button"
-            className={i === viewerPlayer ? 'active' : ''}
-            onClick={() => setViewerOverride(i)}
-          >
-            {n}
-          </button>
-        ))}
-      </div>
-
-      {diceField(`骰子點數總和（由莊家 ${state.names[dealerPlayer]} 擲骰）`)}
+      {isDealer ? (
+        diceField(`骰子點數總和（你是莊家 ${state.names[dealerPlayer]}）`)
+      ) : (
+        <div className="waiting-note">🎲 等待莊家 {state.names[dealerPlayer]} 擲骰…</div>
+      )}
       {rollDetail}
 
       <GameSeatTable
@@ -374,9 +318,7 @@ export default function GameMode({ onHandResolved, onGameReset }) {
                 <button
                   key={choice}
                   type="button"
-                  className={`win-picker__btn ${isSelected ? 'win-picker__btn--selected' : ''} ${
-                    isDimmed ? 'win-picker__btn--disabled' : ''
-                  }`}
+                  className={`win-picker__btn ${isSelected ? 'win-picker__btn--selected' : ''} ${isDimmed ? 'win-picker__btn--disabled' : ''}`}
                   onClick={() => setPendingWinChoice(choice)}
                 >
                   {choice === 'self' ? '自摸' : state.names[choice]}
@@ -407,20 +349,18 @@ export default function GameMode({ onHandResolved, onGameReset }) {
         </div>
       )}
 
-      {!winPickerOpen && !drawConfirmOpen && (
+      {canAct && !winPickerOpen && !drawConfirmOpen && (
         <button type="button" className="game-btn game-btn--primary game-btn--full" onClick={openWinPicker}>
-          🀄 胡牌
+          🀄 我胡了
         </button>
       )}
 
       <div className="game-actions">
-        <div
-          className={`game-dealer-indicator ${state.dealerStreak > 1 ? 'game-dealer-indicator--lit' : ''}`}
-        >
+        <div className={`game-dealer-indicator ${state.dealerStreak > 1 ? 'game-dealer-indicator--lit' : ''}`}>
           👑 連莊{state.dealerStreak}次
         </div>
-        {!winPickerOpen && !drawConfirmOpen && (
-          <button type="button" className="game-btn game-btn--ghost" onClick={openDrawConfirm}>
+        {canAct && !winPickerOpen && !drawConfirmOpen && (
+          <button type="button" className="game-btn game-btn--ghost" onClick={() => setDrawConfirmOpen(true)}>
             🌊 流局
           </button>
         )}

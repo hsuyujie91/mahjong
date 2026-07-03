@@ -55,6 +55,37 @@ export function nextDealerWind(dealerWind) {
   return (dealerWind + 1) % 4
 }
 
+// 把一局結算結果（lastHandResult）轉成計算台數頁要用的同步資訊。
+// 莊家台是否套用分三種情況（見 gameReducer WIN_HAND 註解）：
+// 1. 莊家自己胡牌 → 套用，n 用贏牌後的連莊數
+// 2. 一般玩家胡牌、莊家放槍 → 仍套用莊家台，n 用這局開打前的連莊數
+// 3. 一般玩家自摸 → 不套用莊家台（結算時另外處理莊家多付一台）
+export function handResultToTaiSync(result, names) {
+  if (!result) return null
+  let dealerActive = result.dealerContinued
+  let dealerStreak = result.dealerStreak
+  if (
+    result.type === 'win' &&
+    !result.selfDraw &&
+    result.winner !== result.dealerPlayerAtHand &&
+    result.loser === result.dealerPlayerAtHand
+  ) {
+    dealerActive = true
+    dealerStreak = result.dealerStreakBefore
+  }
+  return {
+    id: result.id,
+    dealerActive,
+    dealerStreak,
+    diceBonus: result.diceBonus ?? null,
+    winner: result.type === 'win' ? result.winner : null,
+    loser: result.type === 'win' ? result.loser : null,
+    selfDraw: result.type === 'win' ? result.selfDraw : false,
+    dealerPlayer: result.dealerPlayerAtHand,
+    names,
+  }
+}
+
 export function createInitialState() {
   return {
     v: 1,
