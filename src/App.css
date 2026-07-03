@@ -872,7 +872,6 @@
 
 .win-picker__btn--disabled {
   opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .win-picker__btn--disabled:hover {
@@ -1123,11 +1122,53 @@
   }
 
   .settings-banner {
-    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .settings-banner__item {
+    gap: 6px;
+  }
+
+  .settings-banner__label {
+    font-size: 15px;
+  }
+
+  .settings-banner__input {
+    width: 56px;
+    padding: 6px 4px;
+    font-size: 16px;
   }
 
   .dealer-panel {
-    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .dealer-panel__toggle {
+    padding: 8px 6px;
+    gap: 4px;
+  }
+
+  .dealer-panel__name {
+    font-size: 13px;
+  }
+
+  .dealer-panel__formula {
+    font-size: 10px;
+  }
+
+  .dealer-panel__streak {
+    gap: 4px;
+  }
+
+  .dealer-panel__streak label {
+    font-size: 11px;
+  }
+
+  .dealer-panel__streak .field__input {
+    width: 52px;
+    padding: 6px 4px;
   }
 
   .result-banner {

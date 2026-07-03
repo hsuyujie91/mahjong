@@ -369,15 +369,14 @@ export default function GameMode({ onHandResolved, onGameReset }) {
           <div className="win-picker__grid">
             {[...[0, 1, 2, 3].filter((i) => i !== viewerPlayer), 'self'].map((choice) => {
               const isSelected = pendingWinChoice === choice
-              const isDisabled = pendingWinChoice !== null && !isSelected
+              const isDimmed = pendingWinChoice !== null && !isSelected
               return (
                 <button
                   key={choice}
                   type="button"
                   className={`win-picker__btn ${isSelected ? 'win-picker__btn--selected' : ''} ${
-                    isDisabled ? 'win-picker__btn--disabled' : ''
+                    isDimmed ? 'win-picker__btn--disabled' : ''
                   }`}
-                  disabled={isDisabled}
                   onClick={() => setPendingWinChoice(choice)}
                 >
                   {choice === 'self' ? '自摸' : state.names[choice]}
