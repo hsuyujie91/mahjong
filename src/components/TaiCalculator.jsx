@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from 'react'
-import { BA_XIAN_GUO_HAI_ID, HUA_GANG_ID, HUA_GANG_LOCK_COUNT, PATTERNS, PATTERN_MAP } from '../data/combos.js'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { PATTERNS, PATTERN_MAP } from '../data/combos.js'
 import { applyPatternIds, parseComboInput } from '../utils/comboParser.js'
 
 const COUNT_PATTERNS = PATTERNS.filter((p) => p.type === 'count')
+const TOGGLE_PATTERNS = PATTERNS.filter((p) => p.type === 'toggle')
 
-export default function TaiCalculator() {
+export default function TaiCalculator({ handSync, settledHandId, onHandSettled, onSettleMoney }) {
   const [di, setDi] = useState(100)
   const [tai, setTai] = useState(50)
   const [query, setQuery] = useState('')
@@ -12,20 +13,31 @@ export default function TaiCalculator() {
   const [counts, setCounts] = useState({})
   const [dealerActive, setDealerActive] = useState(false)
   const [dealerStreak, setDealerStreak] = useState(0)
+  const [diceBonusLit, setDiceBonusLit] = useState(null)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const inputRef = useRef(null)
 
+  // 開桌模式每局結算（胡牌／流局）後會推送莊家連莊與骰子加成，這裡自動帶入
+  useEffect(() => {
+    if (!handSync) return
+    setDealerActive(handSync.dealerActive)
+    setDealerStreak(handSync.dealerStreak)
+    setDiceBonusLit(handSync.diceBonus)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handSync?.id])
+
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
-  const huaGangCount = counts[HUA_GANG_ID] || 0
-  const isBaXianSelected = selectedSet.has(BA_XIAN_GUO_HAI_ID)
-  const isBaXianLocked = huaGangCount >= HUA_GANG_LOCK_COUNT && !isBaXianSelected
-  const isHuaGangPlusLocked = isBaXianSelected
+
+  // 哪些已選的牌型會鎖住某個計數型（花牌／花槓）不能再加
+  function lockingTogglesFor(countId) {
+    return TOGGLE_PATTERNS.filter((p) => p.excludeCounts?.includes(countId) && selectedSet.has(p.id))
+  }
 
   const suggestions = useMemo(() => {
     const q = query.trim()
     if (q === '') return []
     return PATTERNS.filter((p) => {
-      if (p.type === 'label') return false
+      if (p.type === 'label' || p.type === 'break') return false
       if (p.type === 'toggle' && selectedSet.has(p.id)) return false
       return p.id.includes(q)
     })
@@ -39,20 +51,71 @@ export default function TaiCalculator() {
   const dealerTai = dealerActive ? 2 * dealerStreak + 1 : 0
   const toggleTai = selectedToggleCombos.reduce((sum, combo) => sum + combo.tai, 0)
   const countTai = COUNT_PATTERNS.reduce((sum, p) => sum + p.tai * (counts[p.id] || 0), 0)
-  const totalTai = dealerTai + toggleTai + countTai
+  const baseTai = dealerTai + toggleTai + countTai
+  // 骰盅（+2台）／豹子（×2台）／紅豹（×3台）套用在基礎台數之上
+  let totalTai = baseTai
+  if (diceBonusLit?.label === '骰盅') totalTai = baseTai + 2
+  else if (diceBonusLit?.label === '豹子') totalTai = baseTai * 2
+  else if (diceBonusLit?.label === '紅豹') totalTai = baseTai * 3
   const totalMoney = Number(di || 0) + totalTai * Number(tai || 0)
 
-  function addOne(id) {
-    setSelectedIds((prev) => applyPatternIds(prev, [id]))
+  const pendingSettlement = handSync && handSync.winner !== null && handSync.id !== settledHandId
+
+  // 結算：清空已勾選的組合台數（花牌／花槓計數、莊家勾選、骰子加成燈號也一併歸零），
+  // 底、台金額、連莊次數設定過就不會被結算動到。
+  // 若這局有勝負（開桌模式同步過來的最新一局尚未結算過金額），順便自動過帳：
+  // 自摸由贏家收三家的錢，放槍只有放槍者付錢給贏家
+  function settleUp() {
+    if (handSync && handSync.winner !== null && handSync.id !== settledHandId) {
+      onSettleMoney?.({
+        winner: handSync.winner,
+        loser: handSync.loser,
+        selfDraw: handSync.selfDraw,
+        amount: totalMoney,
+      })
+      onHandSettled?.(handSync.id)
+    }
+    setSelectedIds([])
+    setCounts({})
+    setDealerActive(false)
+    setDiceBonusLit(null)
+  }
+
+  // 啟用一批牌型：套用互斥／連帶規則，並將與其相斥的花牌、花槓計數歸零
+  // （選取牌型永遠允許，不會被既有的計數鎖住 —— 鎖住的是計數的「＋」，見 lockingTogglesFor）
+  function activateToggles(ids) {
+    const validIds = ids.filter((id) => PATTERN_MAP.get(id))
+    if (validIds.length === 0) return
+
+    const countsToReset = new Set()
+    validIds.forEach((id) => {
+      if (selectedSet.has(id)) return
+      const pattern = PATTERN_MAP.get(id)
+      pattern.excludeCounts?.forEach((cid) => countsToReset.add(cid))
+    })
+
+    setSelectedIds((prev) => applyPatternIds(prev, validIds))
+    if (countsToReset.size > 0) {
+      setCounts((prev) => {
+        const next = { ...prev }
+        countsToReset.forEach((cid) => {
+          next[cid] = 0
+        })
+        return next
+      })
+    }
   }
 
   function toggleCombo(id) {
-    if (id === BA_XIAN_GUO_HAI_ID && isBaXianLocked) return
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : applyPatternIds(prev, [id])))
+    if (selectedSet.has(id)) {
+      setSelectedIds((prev) => prev.filter((x) => x !== id))
+      return
+    }
+    activateToggles([id])
   }
 
   function changeCount(id, delta) {
-    if (id === HUA_GANG_ID && delta > 0 && isHuaGangPlusLocked) return
+    if (delta > 0 && lockingTogglesFor(id).length > 0) return
     const max = PATTERN_MAP.get(id).max
     setCounts((prev) => {
       const next = Math.min(max, Math.max(0, (prev[id] || 0) + delta))
@@ -64,7 +127,7 @@ export default function TaiCalculator() {
     if (pattern.type === 'count') {
       changeCount(pattern.id, 1)
     } else {
-      addOne(pattern.id)
+      activateToggles([pattern.id])
     }
     setQuery('')
     setShowSuggestions(false)
@@ -79,9 +142,11 @@ export default function TaiCalculator() {
       setDealerStreak(parsedStreak)
     }
 
-    if (found.length > 0) {
-      setSelectedIds((prev) => applyPatternIds(prev, found.filter((id) => id !== BA_XIAN_GUO_HAI_ID || !isBaXianLocked)))
-    }
+    const toggleIds = found.filter((id) => PATTERN_MAP.get(id)?.type === 'toggle')
+    const countIds = found.filter((id) => PATTERN_MAP.get(id)?.type === 'count')
+
+    if (toggleIds.length > 0) activateToggles(toggleIds)
+    countIds.forEach((id) => changeCount(id, 1))
 
     setQuery(leftover)
     setShowSuggestions(false)
@@ -125,19 +190,6 @@ export default function TaiCalculator() {
         </div>
       </div>
 
-      <div className="result-banner">
-        <div className="result-banner__item">
-          <span className="result-banner__label">總台數</span>
-          <span className="result-banner__value">{totalTai} 台</span>
-        </div>
-        <div className="result-banner__item">
-          <span className="result-banner__label">總金額</span>
-          <span className="result-banner__value result-banner__value--money">
-            ${totalMoney.toLocaleString()}
-          </span>
-        </div>
-      </div>
-
       <div className="dealer-panel">
         <div className="dealer-panel__col">
           <button
@@ -168,8 +220,102 @@ export default function TaiCalculator() {
         </div>
       </div>
 
+      <div className="result-banner">
+        <div className="result-banner__grid">
+          <div className="result-banner__item">
+            <span className="result-banner__label">總台數</span>
+            <span className="result-banner__value">{totalTai} 台</span>
+          </div>
+          <div className="result-banner__item">
+            <span className="result-banner__label">總金額</span>
+            <span className="result-banner__value result-banner__value--money">
+              ${totalMoney.toLocaleString()}
+            </span>
+          </div>
+        </div>
+        <button type="button" className="result-banner__settle" onClick={settleUp}>
+          💰 結算
+        </button>
+      </div>
+
+      {pendingSettlement && (
+        <p className="settle-hint">
+          結算後將自動記帳：
+          {handSync.selfDraw
+            ? `${handSync.names[handSync.winner]} 自摸，其餘三家各付 $${totalMoney.toLocaleString()}`
+            : `${handSync.names[handSync.loser]} 放槍，付 $${totalMoney.toLocaleString()} 給 ${handSync.names[handSync.winner]}`}
+        </p>
+      )}
+
+      <div className={`dice-bonus-panel ${diceBonusLit ? 'dice-bonus-panel--lit' : ''}`}>
+        <span className="dice-bonus-panel__name">🎲 骰盅／豹子／紅豹</span>
+        <span className="dice-bonus-panel__detail">
+          {diceBonusLit ? `${diceBonusLit.label} ${diceBonusLit.detail}` : '尚未出現'}
+        </span>
+      </div>
+
+      <h3 className="panel__subtitle">直接點選組合</h3>
+      <div className="combo-grid">
+        {PATTERNS.map((combo) => {
+          if (combo.type === 'break') {
+            return <div key={combo.id} className="combo-grid__break" />
+          }
+
+          if (combo.type === 'label') {
+            return (
+              <div key={combo.id} className="combo-grid__label">
+                <span>{combo.id}</span>
+              </div>
+            )
+          }
+
+          if (combo.type === 'count') {
+            const lockedBy = lockingTogglesFor(combo.id)
+            const isLocked = lockedBy.length > 0
+            return (
+              <div key={combo.id} className="combo-button combo-button--count">
+                <span className="combo-button__name">{combo.id}</span>
+                <span className="combo-button__tai">+{combo.tai} 台／張</span>
+                <div className="stepper">
+                  <button type="button" onClick={() => changeCount(combo.id, -1)} aria-label={`減少${combo.id}`}>
+                    −
+                  </button>
+                  <span className="stepper__value">{counts[combo.id] || 0}</span>
+                  <button
+                    type="button"
+                    onClick={() => changeCount(combo.id, 1)}
+                    disabled={isLocked || (counts[combo.id] || 0) >= combo.max}
+                    aria-label={`增加${combo.id}`}
+                  >
+                    ＋
+                  </button>
+                </div>
+                {isLocked && (
+                  <span className="combo-button__lock-note">
+                    已選{lockedBy.map((p) => p.id).join('、')}，鎖定
+                  </span>
+                )}
+              </div>
+            )
+          }
+
+          const isSelected = selectedSet.has(combo.id)
+          return (
+            <button
+              key={combo.id}
+              type="button"
+              className={`combo-button ${isSelected ? 'combo-button--active' : ''}`}
+              onClick={() => toggleCombo(combo.id)}
+            >
+              <span className="combo-button__name">{combo.id}</span>
+              <span className="combo-button__tai">+{combo.tai} 台</span>
+            </button>
+          )
+        })}
+      </div>
+
       <div className="field field--autocomplete">
-        <label htmlFor="combo-input">輸入胡牌組合</label>
+        <label htmlFor="combo-input">或輸入胡牌組合</label>
         <div className="combo-input-row">
           <input
             id="combo-input"
@@ -202,51 +348,6 @@ export default function TaiCalculator() {
               </li>
             ))}
           </ul>
-        )}
-      </div>
-
-      <h3 className="panel__subtitle">或直接點選組合</h3>
-      <div className="combo-grid">
-        {PATTERNS.map((combo) =>
-          combo.type === 'label' ? (
-            <div key={combo.id} className="combo-grid__label">
-              <span>{combo.id}</span>
-            </div>
-          ) : combo.type === 'count' ? (
-            <div key={combo.id} className="combo-button combo-button--count">
-              <span className="combo-button__name">{combo.id}</span>
-              <span className="combo-button__tai">+{combo.tai} 台／張</span>
-              <div className="stepper">
-                <button type="button" onClick={() => changeCount(combo.id, -1)} aria-label={`減少${combo.id}`}>
-                  −
-                </button>
-                <span className="stepper__value">{counts[combo.id] || 0}</span>
-                <button
-                  type="button"
-                  onClick={() => changeCount(combo.id, 1)}
-                  disabled={combo.id === HUA_GANG_ID && (isHuaGangPlusLocked || huaGangCount >= combo.max)}
-                  aria-label={`增加${combo.id}`}
-                >
-                  ＋
-                </button>
-              </div>
-              {combo.id === HUA_GANG_ID && isHuaGangPlusLocked && (
-                <span className="combo-button__lock-note">已選八仙過海，鎖定</span>
-              )}
-            </div>
-          ) : (
-            <button
-              key={combo.id}
-              type="button"
-              disabled={combo.id === BA_XIAN_GUO_HAI_ID && isBaXianLocked}
-              className={`combo-button ${selectedSet.has(combo.id) ? 'combo-button--active' : ''}`}
-              onClick={() => toggleCombo(combo.id)}
-              title={combo.id === BA_XIAN_GUO_HAI_ID && isBaXianLocked ? '花槓已達 2 次，與八仙過海互斥' : undefined}
-            >
-              <span className="combo-button__name">{combo.id}</span>
-              <span className="combo-button__tai">+{combo.tai} 台</span>
-            </button>
-          ),
         )}
       </div>
     </section>

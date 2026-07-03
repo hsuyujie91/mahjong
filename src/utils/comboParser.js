@@ -1,4 +1,4 @@
-import { PATTERNS, PATTERN_MAP } from '../data/combos.js'
+import { COMBINE_RULES, IMPLIES_RULES, PATTERNS, PATTERN_MAP } from '../data/combos.js'
 
 const CJK_DIGITS = { 零: 0, 〇: 0, 一: 1, 兩: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
 
@@ -24,8 +24,8 @@ export function cjkNumeralToInt(str) {
 const LIAN_ZHUANG_REGEX = /連([0-9零〇一兩二三四五六七八九十]+)拉([0-9零〇一兩二三四五六七八九十]+)/
 
 // 由長到短排序，避免短名稱（如「門清」）搶先吃掉長名稱（如「門清一摸三」）的字元
-// label 只是畫面分隔說明，不能被解析成組合
-const SORTED_PATTERN_IDS = PATTERNS.filter((p) => p.type !== 'label')
+// label／break 只是畫面用的分隔說明或換行佔位，不能被解析成組合
+const SORTED_PATTERN_IDS = PATTERNS.filter((p) => p.type !== 'label' && p.type !== 'break')
   .map((p) => p.id)
   .sort((a, b) => b.length - a.length)
 
@@ -69,11 +69,42 @@ export function parseComboInput(rawText) {
 export function applyPatternIds(currentSelected, idsInOrder) {
   const ordered = [...idsInOrder].sort((a, b) => (PATTERN_MAP.get(a)?.tai ?? 0) - (PATTERN_MAP.get(b)?.tai ?? 0))
   let result = [...currentSelected]
-  for (const id of ordered) {
+
+  function addSingle(id) {
     const pattern = PATTERN_MAP.get(id)
-    if (!pattern) continue
-    result = result.filter((pid) => !pattern.exclude.includes(pid))
+    if (!pattern) return
+    // 雙向檢查：只要任一邊宣告相斥就生效，不必兩邊都寫
+    result = result.filter((pid) => {
+      if (pattern.exclude.includes(pid)) return false
+      const other = PATTERN_MAP.get(pid)
+      if (other?.exclude.includes(id)) return false
+      return true
+    })
     if (!result.includes(id)) result.push(id)
   }
+
+  for (const id of ordered) {
+    addSingle(id)
+  }
+
+  // 合併／連帶規則：跑到不再變動為止（例如合併後可能又觸發別的連帶規則）
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const rule of COMBINE_RULES) {
+      if (rule.requires.every((id) => result.includes(id)) && !result.includes(rule.result)) {
+        result = result.filter((id) => !rule.requires.includes(id))
+        addSingle(rule.result)
+        changed = true
+      }
+    }
+    for (const rule of IMPLIES_RULES) {
+      if (result.includes(rule.trigger) && !result.includes(rule.implies)) {
+        addSingle(rule.implies)
+        changed = true
+      }
+    }
+  }
+
   return result
 }
