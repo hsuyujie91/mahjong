@@ -74,6 +74,7 @@ export function createInitialState() {
     lastRollDice: null,
     handSeq: 0, // 已結算幾局，同時作為 lastHandResult 的唯一序號
     lastHandResult: null,
+    drawnSinceRoll: false, // 這次擲骰後是否已經按過流局，防止重複按時連莊數被連續累加
   }
 }
 
@@ -130,7 +131,7 @@ export function gameReducer(state, action) {
 
     case 'SET_ROLL': {
       if (state.phase !== 'first-dealer' && state.phase !== 'play') return state
-      return { ...state, lastRollTotal: action.total, lastRollDice: action.dice ?? null }
+      return { ...state, lastRollTotal: action.total, lastRollDice: action.dice ?? null, drawnSinceRoll: false }
     }
 
     case 'CONFIRM_FIRST_DEALER': {
@@ -144,6 +145,7 @@ export function gameReducer(state, action) {
         phase: 'play',
         lastRollTotal: null,
         lastRollDice: null,
+        drawnSinceRoll: false,
       }
     }
 
@@ -179,6 +181,7 @@ export function gameReducer(state, action) {
         majiang,
         lastRollTotal: null,
         lastRollDice: null,
+        drawnSinceRoll: false,
         handSeq,
         lastHandResult: {
           id: handSeq,
@@ -194,8 +197,10 @@ export function gameReducer(state, action) {
     }
 
     // 流局：無人胡牌，莊家連莊（連莊數 +1）
+    // 在重新擲骰前重複按流局，只有第一次會生效（見 drawnSinceRoll）
     case 'DRAW_HAND': {
       if (state.phase !== 'play') return state
+      if (state.drawnSinceRoll) return state
       const bonus = diceBonus(state.lastRollDice)
       const handSeq = state.handSeq + 1
       const dealerStreak = state.dealerStreak + 1
@@ -205,6 +210,7 @@ export function gameReducer(state, action) {
         dealerStreak,
         lastRollTotal: null,
         lastRollDice: null,
+        drawnSinceRoll: true,
         handSeq,
         lastHandResult: {
           id: handSeq,

@@ -872,10 +872,32 @@
   border-color: var(--gold);
 }
 
-.win-picker__btn--self {
-  background: linear-gradient(135deg, var(--gold) 0%, var(--red) 100%);
+.win-picker__btn--selected {
+  border-color: var(--gold);
+  background: #fff7e8;
+}
+
+.win-picker__btn--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.win-picker__btn--disabled:hover {
+  transform: none;
+  border-color: var(--border);
+}
+
+.win-picker__confirm {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 20px;
+  margin-top: 12px;
+  font-weight: 700;
+  font-size: 15px;
   color: #fff;
-  border-color: transparent;
+  background: linear-gradient(135deg, var(--gold) 0%, var(--red) 100%);
 }
 
 .win-picker__cancel {

@@ -27,10 +27,12 @@ function initState() {
   return createInitialState()
 }
 
-export default function GameMode({ onHandResolved, onGameReset }) {
+export default function GameMode({ onHandResolved, onGameReset, settledHandId }) {
   const [state, dispatch] = useReducer(gameReducer, undefined, initState)
   const [viewerOverride, setViewerOverride] = useState(null)
   const [winPickerOpen, setWinPickerOpen] = useState(false)
+  const [pendingWinChoice, setPendingWinChoice] = useState(null)
+  const [drawConfirmOpen, setDrawConfirmOpen] = useState(false)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -71,7 +73,16 @@ export default function GameMode({ onHandResolved, onGameReset }) {
       }))
     : []
 
+  // 胡牌後若尚未在計算台數頁結算金額，就先重新擲骰／再次胡牌／流局，要先跟使用者確認
+  const hasPendingSettlement = state.lastHandResult?.type === 'win' && state.lastHandResult.id !== settledHandId
+
+  function confirmSettlementIfNeeded() {
+    if (!hasPendingSettlement) return true
+    return window.confirm('尚未結算資金，確認要重新擲骰？')
+  }
+
   function rollDice() {
+    if (!confirmSettlementIfNeeded()) return
     const dice = [1, 2, 3].map(() => Math.floor(Math.random() * 6) + 1)
     const total = dice.reduce((sum, n) => sum + n, 0)
     dispatch({ type: 'SET_ROLL', total, dice })
@@ -85,13 +96,33 @@ export default function GameMode({ onHandResolved, onGameReset }) {
     }
   }
 
-  function resolveWin(loser) {
-    dispatch({ type: 'WIN_HAND', winner: viewerPlayer, loser, selfDraw: loser === null })
-    setWinPickerOpen(false)
+  function openWinPicker() {
+    if (!confirmSettlementIfNeeded()) return
+    setPendingWinChoice(null)
+    setWinPickerOpen(true)
   }
 
-  function declareDraw() {
+  function cancelWinPicker() {
+    setWinPickerOpen(false)
+    setPendingWinChoice(null)
+  }
+
+  function confirmWin() {
+    if (pendingWinChoice === null) return
+    const loser = pendingWinChoice === 'self' ? null : pendingWinChoice
+    dispatch({ type: 'WIN_HAND', winner: viewerPlayer, loser, selfDraw: pendingWinChoice === 'self' })
+    setWinPickerOpen(false)
+    setPendingWinChoice(null)
+  }
+
+  function openDrawConfirm() {
+    if (!confirmSettlementIfNeeded()) return
+    setDrawConfirmOpen(true)
+  }
+
+  function confirmDraw() {
     dispatch({ type: 'DRAW_HAND' })
+    setDrawConfirmOpen(false)
   }
 
   const diceField = (labelText) => (
@@ -312,31 +343,57 @@ export default function GameMode({ onHandResolved, onGameReset }) {
         </div>
       </div>
 
-      {winPickerOpen ? (
+      {winPickerOpen && (
         <div className="win-picker">
           <p className="win-picker__title">🀄 {state.names[viewerPlayer]} 胡牌！請選擇放槍者</p>
           <div className="win-picker__grid">
-            {[0, 1, 2, 3]
-              .filter((i) => i !== viewerPlayer)
-              .map((i) => (
-                <button key={i} type="button" className="win-picker__btn" onClick={() => resolveWin(i)}>
-                  {state.names[i]}
+            {[...[0, 1, 2, 3].filter((i) => i !== viewerPlayer), 'self'].map((choice) => {
+              const isSelected = pendingWinChoice === choice
+              const isDisabled = pendingWinChoice !== null && !isSelected
+              return (
+                <button
+                  key={choice}
+                  type="button"
+                  className={`win-picker__btn ${isSelected ? 'win-picker__btn--selected' : ''} ${
+                    isDisabled ? 'win-picker__btn--disabled' : ''
+                  }`}
+                  disabled={isDisabled}
+                  onClick={() => setPendingWinChoice(choice)}
+                >
+                  {choice === 'self' ? '自摸' : state.names[choice]}
                 </button>
-              ))}
-            <button type="button" className="win-picker__btn win-picker__btn--self" onClick={() => resolveWin(null)}>
-              自摸
-            </button>
+              )
+            })}
           </div>
-          <button type="button" className="win-picker__cancel" onClick={() => setWinPickerOpen(false)}>
-            取消，我在亂皮
+          {pendingWinChoice !== null && (
+            <button type="button" className="win-picker__confirm" onClick={confirmWin}>
+              ✅ 確定
+            </button>
+          )}
+          <button type="button" className="win-picker__cancel" onClick={cancelWinPicker}>
+            取消 我在亂皮
           </button>
         </div>
-      ) : (
+      )}
+
+      {drawConfirmOpen && (
+        <div className="win-picker">
+          <p className="win-picker__title">🌊 確認流局？</p>
+          <button type="button" className="win-picker__confirm" onClick={confirmDraw}>
+            ✅ 確定
+          </button>
+          <button type="button" className="win-picker__cancel" onClick={() => setDrawConfirmOpen(false)}>
+            取消 我在亂皮
+          </button>
+        </div>
+      )}
+
+      {!winPickerOpen && !drawConfirmOpen && (
         <div className="hand-actions">
-          <button type="button" className="game-btn game-btn--primary" onClick={() => setWinPickerOpen(true)}>
+          <button type="button" className="game-btn game-btn--primary" onClick={openWinPicker}>
             🀄 胡牌
           </button>
-          <button type="button" className="game-btn game-btn--ghost" onClick={declareDraw}>
+          <button type="button" className="game-btn game-btn--ghost" onClick={openDrawConfirm}>
             🌊 流局
           </button>
         </div>

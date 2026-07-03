@@ -92,7 +92,9 @@ function App() {
       </nav>
 
       <main className="app__main">
-        {activeTab === 'game' && <GameMode onHandResolved={handleHandResolved} onGameReset={handleGameReset} />}
+        {activeTab === 'game' && (
+          <GameMode onHandResolved={handleHandResolved} onGameReset={handleGameReset} settledHandId={settledHandId} />
+        )}
         {activeTab === 'tai' && (
           <TaiCalculator
             handSync={handSync}
