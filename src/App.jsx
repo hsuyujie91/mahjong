@@ -11,7 +11,10 @@ const TABS = [
 ]
 
 const FUNDS_KEY = 'mahjong-funds-state'
+const TAI_SETTINGS_KEY = 'mahjong-tai-settings'
 const DEFAULT_NAMES = ['玩家1', '玩家2', '玩家3', '玩家4']
+const DEFAULT_DI = 20
+const DEFAULT_TAI = 10
 
 function initFunds() {
   try {
@@ -26,28 +29,49 @@ function initFunds() {
   return [0, 0, 0, 0]
 }
 
+function initTaiSettings() {
+  try {
+    const raw = localStorage.getItem(TAI_SETTINGS_KEY)
+    if (raw) {
+      const saved = JSON.parse(raw)
+      if (saved && typeof saved.di !== 'undefined' && typeof saved.tai !== 'undefined') return saved
+    }
+  } catch {
+    // 存檔壞掉就用預設值
+  }
+  return { di: DEFAULT_DI, tai: DEFAULT_TAI }
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('game')
   const [handSync, setHandSync] = useState(null)
   const [settledHandId, setSettledHandId] = useState(null)
   const [funds, setFunds] = useState(initFunds)
   const [fundsNames, setFundsNames] = useState(DEFAULT_NAMES)
+  const [taiSettings, setTaiSettings] = useState(initTaiSettings)
 
   useEffect(() => {
     localStorage.setItem(FUNDS_KEY, JSON.stringify(funds))
   }, [funds])
+
+  useEffect(() => {
+    localStorage.setItem(TAI_SETTINGS_KEY, JSON.stringify(taiSettings))
+  }, [taiSettings])
 
   const handleHandResolved = useCallback((sync) => {
     setHandSync(sync)
     if (sync?.names) setFundsNames(sync.names)
   }, [])
 
+  // 重新開桌：資金與底／台設定一起歸零／回到預設值
   const handleGameReset = useCallback(() => {
     setFunds([0, 0, 0, 0])
+    setTaiSettings({ di: DEFAULT_DI, tai: DEFAULT_TAI })
   }, [])
 
-  // 自摸：贏家收三家的錢；放槍：只有放槍者付錢給贏家
-  const handleSettleMoney = useCallback(({ winner, loser, selfDraw, amount }) => {
+  // 自摸：贏家收三家的錢；放槍：只有放槍者付錢給贏家；
+  // dealerSurcharge：一般玩家自摸時，莊家要多付一台的錢給贏家
+  const handleSettleMoney = useCallback(({ winner, loser, selfDraw, amount, dealerSurcharge }) => {
     setFunds((prev) => {
       const next = [...prev]
       if (selfDraw) {
@@ -58,6 +82,10 @@ function App() {
       } else {
         next[winner] += amount
         next[loser] -= amount
+      }
+      if (dealerSurcharge) {
+        next[dealerSurcharge.from] -= dealerSurcharge.amount
+        next[dealerSurcharge.to] += dealerSurcharge.amount
       }
       return next
     })
@@ -92,15 +120,17 @@ function App() {
       </nav>
 
       <main className="app__main">
-        {activeTab === 'game' && (
-          <GameMode onHandResolved={handleHandResolved} onGameReset={handleGameReset} settledHandId={settledHandId} />
-        )}
+        {activeTab === 'game' && <GameMode onHandResolved={handleHandResolved} onGameReset={handleGameReset} />}
         {activeTab === 'tai' && (
           <TaiCalculator
             handSync={handSync}
             settledHandId={settledHandId}
             onHandSettled={setSettledHandId}
             onSettleMoney={handleSettleMoney}
+            di={taiSettings.di}
+            tai={taiSettings.tai}
+            onDiChange={(di) => setTaiSettings((prev) => ({ ...prev, di }))}
+            onTaiChange={(tai) => setTaiSettings((prev) => ({ ...prev, tai }))}
           />
         )}
         {activeTab === 'funds' && <FundsStatus funds={funds} names={fundsNames} onReset={resetFunds} />}

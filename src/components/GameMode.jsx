@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import GameSeatTable from './GameSeatTable.jsx'
 import {
   WINDS,
@@ -27,29 +27,68 @@ function initState() {
   return createInitialState()
 }
 
-export default function GameMode({ onHandResolved, onGameReset, settledHandId }) {
+export default function GameMode({ onHandResolved, onGameReset }) {
   const [state, dispatch] = useReducer(gameReducer, undefined, initState)
   const [viewerOverride, setViewerOverride] = useState(null)
   const [winPickerOpen, setWinPickerOpen] = useState(false)
   const [pendingWinChoice, setPendingWinChoice] = useState(null)
   const [drawConfirmOpen, setDrawConfirmOpen] = useState(false)
+  const winPickerRef = useRef(null)
+  const drawConfirmRef = useRef(null)
+
+  // 點選單以外的地方時，胡牌／流局選單自動收合回原始按鈕
+  useEffect(() => {
+    if (!winPickerOpen) return
+    function handleClickOutside(e) {
+      if (winPickerRef.current && !winPickerRef.current.contains(e.target)) cancelWinPicker()
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [winPickerOpen])
+
+  useEffect(() => {
+    if (!drawConfirmOpen) return
+    function handleClickOutside(e) {
+      if (drawConfirmRef.current && !drawConfirmRef.current.contains(e.target)) setDrawConfirmOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [drawConfirmOpen])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   }, [state])
 
-  // 每局結算（胡牌／流局）後，把莊家連莊、骰子加成、胡牌輸贏名單同步給計算台數頁面
+  // 每局結算（胡牌／流局）後，把莊家連莊、骰子加成、胡牌輸贏名單同步給計算台數頁面。
+  // 莊家台是否套用分三種情況：
+  // 1. 莊家自己胡牌（自摸或放槍皆算）→ 套用，n 用贏牌後的連莊數
+  // 2. 一般玩家胡牌、莊家放槍 → 仍套用莊家台，但 n 用這局開打前（莊家换人前）的連莊數
+  // 3. 一般玩家自摸 → 不套用莊家台（金額另外在結算時處理莊家多付的部分，見 TaiCalculator）
   useEffect(() => {
     if (!state.lastHandResult || !onHandResolved) return
     const result = state.lastHandResult
+
+    let dealerActive = result.dealerContinued
+    let dealerStreak = result.dealerStreak
+    if (
+      result.type === 'win' &&
+      !result.selfDraw &&
+      result.winner !== result.dealerPlayerAtHand &&
+      result.loser === result.dealerPlayerAtHand
+    ) {
+      dealerActive = true
+      dealerStreak = result.dealerStreakBefore
+    }
+
     onHandResolved({
       id: result.id,
-      dealerActive: result.dealerContinued,
-      dealerStreak: result.dealerStreak,
+      dealerActive,
+      dealerStreak,
       diceBonus: result.diceBonus,
       winner: result.type === 'win' ? result.winner : null,
       loser: result.type === 'win' ? result.loser : null,
       selfDraw: result.type === 'win' ? result.selfDraw : false,
+      dealerPlayer: result.dealerPlayerAtHand,
       names: state.names,
     })
   }, [state.lastHandResult, onHandResolved, state.names])
@@ -73,16 +112,7 @@ export default function GameMode({ onHandResolved, onGameReset, settledHandId })
       }))
     : []
 
-  // 胡牌後若尚未在計算台數頁結算金額，就先重新擲骰／再次胡牌／流局，要先跟使用者確認
-  const hasPendingSettlement = state.lastHandResult?.type === 'win' && state.lastHandResult.id !== settledHandId
-
-  function confirmSettlementIfNeeded() {
-    if (!hasPendingSettlement) return true
-    return window.confirm('尚未結算資金，確認要重新擲骰？')
-  }
-
   function rollDice() {
-    if (!confirmSettlementIfNeeded()) return
     const dice = [1, 2, 3].map(() => Math.floor(Math.random() * 6) + 1)
     const total = dice.reduce((sum, n) => sum + n, 0)
     dispatch({ type: 'SET_ROLL', total, dice })
@@ -97,7 +127,6 @@ export default function GameMode({ onHandResolved, onGameReset, settledHandId })
   }
 
   function openWinPicker() {
-    if (!confirmSettlementIfNeeded()) return
     setPendingWinChoice(null)
     setWinPickerOpen(true)
   }
@@ -116,7 +145,6 @@ export default function GameMode({ onHandResolved, onGameReset, settledHandId })
   }
 
   function openDrawConfirm() {
-    if (!confirmSettlementIfNeeded()) return
     setDrawConfirmOpen(true)
   }
 
@@ -335,16 +363,8 @@ export default function GameMode({ onHandResolved, onGameReset, settledHandId })
         </div>
       )}
 
-      <div className="game-actions">
-        <div
-          className={`game-dealer-indicator ${state.dealerStreak > 1 ? 'game-dealer-indicator--lit' : ''}`}
-        >
-          👑 連莊{state.dealerStreak}次
-        </div>
-      </div>
-
       {winPickerOpen && (
-        <div className="win-picker">
+        <div className="win-picker" ref={winPickerRef}>
           <p className="win-picker__title">🀄 {state.names[viewerPlayer]} 胡牌！請選擇放槍者</p>
           <div className="win-picker__grid">
             {[...[0, 1, 2, 3].filter((i) => i !== viewerPlayer), 'self'].map((choice) => {
@@ -377,7 +397,7 @@ export default function GameMode({ onHandResolved, onGameReset, settledHandId })
       )}
 
       {drawConfirmOpen && (
-        <div className="win-picker">
+        <div className="win-picker" ref={drawConfirmRef}>
           <p className="win-picker__title">🌊 確認流局？</p>
           <button type="button" className="win-picker__confirm" onClick={confirmDraw}>
             ✅ 確定
@@ -389,15 +409,23 @@ export default function GameMode({ onHandResolved, onGameReset, settledHandId })
       )}
 
       {!winPickerOpen && !drawConfirmOpen && (
-        <div className="hand-actions">
-          <button type="button" className="game-btn game-btn--primary" onClick={openWinPicker}>
-            🀄 胡牌
-          </button>
+        <button type="button" className="game-btn game-btn--primary game-btn--full" onClick={openWinPicker}>
+          🀄 胡牌
+        </button>
+      )}
+
+      <div className="game-actions">
+        <div
+          className={`game-dealer-indicator ${state.dealerStreak > 1 ? 'game-dealer-indicator--lit' : ''}`}
+        >
+          👑 連莊{state.dealerStreak}次
+        </div>
+        {!winPickerOpen && !drawConfirmOpen && (
           <button type="button" className="game-btn game-btn--ghost" onClick={openDrawConfirm}>
             🌊 流局
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="game-reset">
         <button type="button" onClick={resetGame}>重新開桌</button>

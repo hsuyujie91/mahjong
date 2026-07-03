@@ -156,6 +156,9 @@ export function gameReducer(state, action) {
       const winnerIsDealer = state.windOfPlayer[action.winner] === state.dealerWind
       const bonus = diceBonus(state.lastRollDice)
       const handSeq = state.handSeq + 1
+      // 這局開打時的莊家與其連莊數（供莊家放槍等情境計算莊家台用，此時莊家不連莊、streak 不會遞增）
+      const dealerPlayerAtHand = state.windOfPlayer.indexOf(state.dealerWind)
+      const dealerStreakBefore = state.dealerStreak
 
       let dealerWind = state.dealerWind
       let dealerStreak = state.dealerStreak
@@ -191,6 +194,8 @@ export function gameReducer(state, action) {
           selfDraw: !!action.selfDraw,
           dealerContinued: winnerIsDealer,
           dealerStreak,
+          dealerPlayerAtHand,
+          dealerStreakBefore,
           diceBonus: bonus,
         },
       }
@@ -220,6 +225,8 @@ export function gameReducer(state, action) {
           selfDraw: false,
           dealerContinued: true,
           dealerStreak,
+          dealerPlayerAtHand: state.windOfPlayer.indexOf(state.dealerWind),
+          dealerStreakBefore: state.dealerStreak,
           diceBonus: bonus,
         },
       }

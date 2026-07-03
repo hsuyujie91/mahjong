@@ -5,24 +5,37 @@ import { applyPatternIds, parseComboInput } from '../utils/comboParser.js'
 const COUNT_PATTERNS = PATTERNS.filter((p) => p.type === 'count')
 const TOGGLE_PATTERNS = PATTERNS.filter((p) => p.type === 'toggle')
 
-export default function TaiCalculator({ handSync, settledHandId, onHandSettled, onSettleMoney }) {
-  const [di, setDi] = useState(100)
-  const [tai, setTai] = useState(50)
+export default function TaiCalculator({
+  handSync,
+  settledHandId,
+  onHandSettled,
+  onSettleMoney,
+  di,
+  tai,
+  onDiChange,
+  onTaiChange,
+}) {
   const [query, setQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
   const [counts, setCounts] = useState({})
   const [dealerActive, setDealerActive] = useState(false)
   const [dealerStreak, setDealerStreak] = useState(0)
   const [diceBonusLit, setDiceBonusLit] = useState(null)
+  const [zimoConfirmOpen, setZimoConfirmOpen] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const inputRef = useRef(null)
 
-  // 開桌模式每局結算（胡牌／流局）後會推送莊家連莊與骰子加成，這裡自動帶入
+  // 開桌模式每局結算（胡牌／流局）後會推送莊家連莊、骰子加成、是否自摸，這裡自動帶入
   useEffect(() => {
     if (!handSync) return
     setDealerActive(handSync.dealerActive)
     setDealerStreak(handSync.dealerStreak)
     setDiceBonusLit(handSync.diceBonus)
+    if (handSync.selfDraw) {
+      activateToggles(['自摸'])
+    } else {
+      setSelectedIds((prev) => prev.filter((x) => x !== '自摸'))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handSync?.id])
 
@@ -61,17 +74,28 @@ export default function TaiCalculator({ handSync, settledHandId, onHandSettled, 
 
   const pendingSettlement = handSync && handSync.winner !== null && handSync.id !== settledHandId
 
+  // 資金用的自摸判定：若原本就沒有記錄放槍者（真自摸，loser 為 null），沒有人可以扣款，
+  // 只能維持自摸算法；有放槍者時才依「自摸」勾選狀態決定要用自摸還是放槍的算法（供手動更正用）
+  const selfDrawForMoney = handSync && handSync.loser === null ? true : selectedSet.has('自摸')
+
+  // 一般玩家自摸時，莊家（若非贏家）要多付一台的錢給自摸玩家
+  const dealerSurcharge =
+    pendingSettlement && selfDrawForMoney && handSync.dealerPlayer >= 0 && handSync.dealerPlayer !== handSync.winner
+      ? { from: handSync.dealerPlayer, to: handSync.winner, amount: Number(tai || 0) }
+      : null
+
   // 結算：清空已勾選的組合台數（花牌／花槓計數、莊家勾選、骰子加成燈號也一併歸零），
   // 底、台金額、連莊次數設定過就不會被結算動到。
   // 若這局有勝負（開桌模式同步過來的最新一局尚未結算過金額），順便自動過帳：
-  // 自摸由贏家收三家的錢，放槍只有放槍者付錢給贏家
+  // 自摸由贏家收三家的錢，放槍只有放槍者付錢給贏家，莊家自摸時另外多收一台差額
   function settleUp() {
-    if (handSync && handSync.winner !== null && handSync.id !== settledHandId) {
+    if (pendingSettlement) {
       onSettleMoney?.({
         winner: handSync.winner,
         loser: handSync.loser,
-        selfDraw: handSync.selfDraw,
+        selfDraw: selfDrawForMoney,
         amount: totalMoney,
+        dealerSurcharge,
       })
       onHandSettled?.(handSync.id)
     }
@@ -112,6 +136,28 @@ export default function TaiCalculator({ handSync, settledHandId, onHandSettled, 
       return
     }
     activateToggles([id])
+  }
+
+  // 「自摸」牽動資金算法，取消或補選都要先確認，避免誤觸改變輸贏金額
+  function handleZimoClick() {
+    if (selectedSet.has('自摸')) {
+      if (window.confirm('確定要取消自摸嗎？')) toggleCombo('自摸')
+      return
+    }
+    if (handSync && handSync.winner !== null && !handSync.selfDraw) {
+      setZimoConfirmOpen(true)
+      return
+    }
+    toggleCombo('自摸')
+  }
+
+  function confirmZimoYes() {
+    toggleCombo('自摸')
+    setZimoConfirmOpen(false)
+  }
+
+  function confirmZimoNo() {
+    setZimoConfirmOpen(false)
   }
 
   function changeCount(id, delta) {
@@ -172,7 +218,7 @@ export default function TaiCalculator({ handSync, settledHandId, onHandSettled, 
             min="0"
             step="10"
             value={di}
-            onChange={(e) => setDi(e.target.value)}
+            onChange={(e) => onDiChange?.(e.target.value)}
             className="settings-banner__input"
           />
         </div>
@@ -184,7 +230,7 @@ export default function TaiCalculator({ handSync, settledHandId, onHandSettled, 
             min="0"
             step="10"
             value={tai}
-            onChange={(e) => setTai(e.target.value)}
+            onChange={(e) => onTaiChange?.(e.target.value)}
             className="settings-banner__input"
           />
         </div>
@@ -241,10 +287,28 @@ export default function TaiCalculator({ handSync, settledHandId, onHandSettled, 
       {pendingSettlement && (
         <p className="settle-hint">
           結算後將自動記帳：
-          {handSync.selfDraw
+          {selfDrawForMoney
             ? `${handSync.names[handSync.winner]} 自摸，其餘三家各付 $${totalMoney.toLocaleString()}`
             : `${handSync.names[handSync.loser]} 放槍，付 $${totalMoney.toLocaleString()} 給 ${handSync.names[handSync.winner]}`}
+          {dealerSurcharge &&
+            `｜莊家 ${handSync.names[dealerSurcharge.from]} 另付 $${dealerSurcharge.amount.toLocaleString()} 給贏家`}
         </p>
+      )}
+
+      {zimoConfirmOpen && (
+        <div className="modal-overlay" onClick={confirmZimoNo}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <p className="modal-card__title">你幹嘛 剛剛真的有自摸嗎？</p>
+            <div className="zimo-confirm__actions">
+              <button type="button" className="zimo-confirm__yes" onClick={confirmZimoYes}>
+                真的自摸
+              </button>
+              <button type="button" className="zimo-confirm__no" onClick={confirmZimoNo}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className={`dice-bonus-panel ${diceBonusLit ? 'dice-bonus-panel--lit' : ''}`}>
@@ -305,7 +369,7 @@ export default function TaiCalculator({ handSync, settledHandId, onHandSettled, 
               key={combo.id}
               type="button"
               className={`combo-button ${isSelected ? 'combo-button--active' : ''}`}
-              onClick={() => toggleCombo(combo.id)}
+              onClick={() => (combo.id === '自摸' ? handleZimoClick() : toggleCombo(combo.id))}
             >
               <span className="combo-button__name">{combo.id}</span>
               <span className="combo-button__tai">+{combo.tai} 台</span>
