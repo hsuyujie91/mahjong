@@ -2,10 +2,9 @@ import { claimSeat, dispatchGame, releaseSeat, resetRoom, setPlayerName } from '
 
 export default function WaitingRoom({ room, roomCode, uid, onLeave }) {
   const claims = room.claims || {}
+  const amHost = room.host === uid
   const mySeatEntry = Object.entries(claims).find(([, u]) => u === uid)
   const mySeat = mySeatEntry ? Number(mySeatEntry[0]) : null
-  const claimedCount = Object.values(claims).filter(Boolean).length
-  const allSeated = [0, 1, 2, 3].every((s) => claims[s])
 
   async function handleClaim(seat) {
     try {
@@ -17,8 +16,6 @@ export default function WaitingRoom({ room, roomCode, uid, onLeave }) {
 
   return (
     <section className="panel">
-      <h2 className="panel__title">🎴 等待玩家加入</h2>
-
       <div className="room-code">
         <span className="room-code__label">房號</span>
         <span className="room-code__value">{roomCode}</span>
@@ -30,28 +27,29 @@ export default function WaitingRoom({ room, roomCode, uid, onLeave }) {
           複製
         </button>
       </div>
-      <p className="game-hint">把房號給其他三位，請他們在自己手機上輸入房號、認領座位。四位到齊就能開始。</p>
+      <p className="game-hint">
+        {amHost
+          ? '你是開桌者：可以直接幫大家填好名字後開始，一支手機就能全程操作。其他人之後用同一房號加入、認領自己的座位，就會切成自己的視角。'
+          : '認領一個座位、填你的名字。開桌者也可能直接開始，你之後再加入認領座位即可。'}
+      </p>
 
       <div className="seat-claim-list">
         {[0, 1, 2, 3].map((seat) => {
           const taken = !!claims[seat]
           const isMine = mySeat === seat
+          const canEditName = amHost || isMine
           return (
             <div key={seat} className={`seat-claim ${taken ? 'seat-claim--taken' : ''} ${isMine ? 'seat-claim--mine' : ''}`}>
               <span className="seat-claim__no">{seat + 1}</span>
-              {taken ? (
-                isMine ? (
-                  <input
-                    className="seat-claim__name-input"
-                    value={room.game.names[seat]}
-                    maxLength={8}
-                    onChange={(e) => setPlayerName(roomCode, seat, e.target.value)}
-                  />
-                ) : (
-                  <span className="seat-claim__name">{room.game.names[seat]}</span>
-                )
+              {canEditName ? (
+                <input
+                  className="seat-claim__name-input"
+                  value={room.game.names[seat]}
+                  maxLength={8}
+                  onChange={(e) => setPlayerName(roomCode, seat, e.target.value)}
+                />
               ) : (
-                <span className="seat-claim__empty">空位</span>
+                <span className="seat-claim__name">{room.game.names[seat]}</span>
               )}
               <div className="seat-claim__action">
                 {isMine ? (
@@ -62,6 +60,8 @@ export default function WaitingRoom({ room, roomCode, uid, onLeave }) {
                   <button type="button" className="seat-claim__btn" onClick={() => handleClaim(seat)}>
                     坐這
                   </button>
+                ) : taken ? (
+                  <span className="seat-claim__badge">已認領</span>
                 ) : null}
               </div>
             </div>
@@ -72,10 +72,9 @@ export default function WaitingRoom({ room, roomCode, uid, onLeave }) {
       <button
         type="button"
         className="game-btn game-btn--primary game-btn--full"
-        disabled={!allSeated}
         onClick={() => dispatchGame(roomCode, { type: 'START_DRAW' })}
       >
-        {allSeated ? '開始抽風位' : `尚缺 ${4 - claimedCount} 人`}
+        開始抽風位
       </button>
 
       <div className="game-reset">

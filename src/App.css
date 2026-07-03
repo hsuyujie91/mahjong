@@ -151,6 +151,62 @@
   width: 100%;
 }
 
+.dice-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.dice-input-row .field__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dice-input-row .dice-roll-button {
+  flex: none;
+}
+
+.dice-dealer-pick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.dice-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.claim-prompt {
+  background: #fffaf0;
+  border: 2px solid #f5e6c8;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.claim-prompt__title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 14px;
+  margin: 0 0 10px;
+  color: var(--red-dark);
+}
+
+.claim-prompt__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.seat-claim__badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--jade-dark);
+}
+
 .dice-roll-result {
   margin: 14px 0 4px;
   text-align: center;
@@ -1291,10 +1347,19 @@
     padding: 20px;
   }
 
+  .tabs {
+    gap: 4px;
+    padding: 4px;
+  }
+
   .tabs__button {
-    padding: 10px 6px;
-    font-size: 12px;
+    padding: 9px 3px;
+    font-size: 11px;
     white-space: nowrap;
+  }
+
+  .dice-buttons {
+    gap: 6px;
   }
 
   .seat-table--game {

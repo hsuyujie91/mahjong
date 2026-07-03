@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createRoom, roomExists } from '../hooks/useRoom.js'
 
-export default function Entry({ onJoined }) {
+export default function Entry({ uid, onJoined }) {
   const [mode, setMode] = useState(null) // null | 'join'
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
@@ -11,7 +11,7 @@ export default function Entry({ onJoined }) {
     setBusy(true)
     setError('')
     try {
-      const roomCode = await createRoom()
+      const roomCode = await createRoom(uid)
       onJoined(roomCode)
     } catch (e) {
       setError(e.message || '開桌失敗，請再試一次')

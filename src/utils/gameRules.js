@@ -270,3 +270,81 @@ export function gameReducer(state, action) {
       return state
   }
 }
+
+// ───────────────────────────────────────────────
+// 擲骰模式：獨立於開桌模式的簡化狀態，只算骰子／抓牌位子／莊家／圈風，
+// 沒有胡牌、算台數、資金。座位固定 0=下、1=右、2=上、3=左，門風由莊家位推算。
+export function createDiceState() {
+  return {
+    phase: 'setup', // setup（輸入名字、選莊）→ play
+    names: ['玩家1', '玩家2', '玩家3', '玩家4'],
+    dealerSeat: null,
+    firstDealerSeat: null,
+    dealerStreak: 0,
+    roundWind: 0,
+    majiang: 0,
+    lastRollTotal: null,
+    lastRollDice: null,
+  }
+}
+
+// 某座位的門風：莊家為東，往右手邊（+1）依序 南、西、北
+export function seatWind(seat, dealerSeat) {
+  if (dealerSeat == null) return null
+  return (seat - dealerSeat + 4) % 4
+}
+
+export function diceReducer(state, action) {
+  switch (action.type) {
+    case 'DICE_SET_NAME': {
+      const names = [...state.names]
+      names[action.index] = action.name
+      return { ...state, names }
+    }
+
+    case 'DICE_START': {
+      const names = state.names.map((n, i) => (n.trim() === '' ? `玩家${i + 1}` : n.trim()))
+      return {
+        ...state,
+        names,
+        phase: 'play',
+        dealerSeat: action.seat,
+        firstDealerSeat: action.seat,
+        dealerStreak: 0,
+        roundWind: 0,
+        majiang: 0,
+        lastRollTotal: null,
+        lastRollDice: null,
+      }
+    }
+
+    case 'DICE_ROLL': {
+      if (state.phase !== 'play') return state
+      return { ...state, lastRollTotal: action.total, lastRollDice: action.dice ?? null }
+    }
+
+    // 連莊／流局：莊家續莊，連莊數 +1
+    case 'DICE_STAY': {
+      if (state.phase !== 'play') return state
+      return { ...state, dealerStreak: state.dealerStreak + 1, lastRollTotal: null, lastRollDice: null }
+    }
+
+    // 下莊：換下一位當莊、連莊歸零；輪回第一位莊家算一圈，圈風進一格，四圈算一將
+    case 'DICE_PASS': {
+      if (state.phase !== 'play') return state
+      const dealerSeat = (state.dealerSeat + 1) % 4
+      let { roundWind, majiang } = state
+      if (dealerSeat === state.firstDealerSeat) {
+        roundWind = (roundWind + 1) % 4
+        if (roundWind === 0) majiang += 1
+      }
+      return { ...state, dealerSeat, dealerStreak: 0, roundWind, majiang, lastRollTotal: null, lastRollDice: null }
+    }
+
+    case 'DICE_RESET':
+      return createDiceState()
+
+    default:
+      return state
+  }
+}

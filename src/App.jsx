@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import DiceMode from './components/DiceMode.jsx'
 import Entry from './components/Entry.jsx'
 import FundsStatus from './components/FundsStatus.jsx'
 import GameMode from './components/GameMode.jsx'
@@ -10,6 +11,7 @@ import './App.css'
 
 const TABS = [
   { id: 'game', label: '開桌模式', emoji: '🎴' },
+  { id: 'dice', label: '擲骰', emoji: '🎲' },
   { id: 'tai', label: '計算台數', emoji: '🀄' },
   { id: 'funds', label: '資金現狀', emoji: '💰' },
 ]
@@ -54,6 +56,8 @@ function App() {
   const mySeatEntry = Object.entries(claims).find(([, u]) => u === uid)
   const mySeat = mySeatEntry ? Number(mySeatEntry[0]) : null
 
+  const inRoom = firebaseReady && uid && roomCode && room
+
   function renderBody() {
     if (!firebaseReady) {
       return <section className="panel"><p className="game-hint">尚未設定 Firebase 連線。</p></section>
@@ -65,17 +69,20 @@ function App() {
       return <section className="panel"><p className="game-hint">連線中…</p></section>
     }
     if (!roomCode) {
-      return <Entry onJoined={joinRoom} />
+      return <Entry uid={uid} onJoined={joinRoom} />
     }
     if (loading || !room) {
       return <section className="panel"><p className="game-hint">載入牌桌 {roomCode}…</p></section>
     }
-    if (room.game.phase === 'lobby') {
-      return <WaitingRoom room={room} roomCode={roomCode} uid={uid} onLeave={leaveRoom} />
-    }
     switch (activeTab) {
       case 'game':
-        return <GameMode room={room} roomCode={roomCode} mySeat={mySeat} onLeave={leaveRoom} />
+        return room.game.phase === 'lobby' ? (
+          <WaitingRoom room={room} roomCode={roomCode} uid={uid} onLeave={leaveRoom} />
+        ) : (
+          <GameMode room={room} roomCode={roomCode} uid={uid} mySeat={mySeat} onLeave={leaveRoom} />
+        )
+      case 'dice':
+        return <DiceMode room={room} roomCode={roomCode} />
       case 'tai':
         return <TaiCalculator room={room} roomCode={roomCode} />
       case 'funds':
@@ -84,8 +91,6 @@ function App() {
         return null
     }
   }
-
-  const showTabs = firebaseReady && uid && roomCode && room && room.game.phase !== 'lobby'
 
   return (
     <div className="app">
@@ -96,7 +101,7 @@ function App() {
         <p className="app__subtitle">保安！可以讓人打了又打 打了又打的嗎！</p>
       </header>
 
-      {showTabs && (
+      {inRoom && (
         <nav className="tabs">
           {TABS.map((tab) => (
             <button

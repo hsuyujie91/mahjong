@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import GameSeatTable from './GameSeatTable.jsx'
 import { WINDS, diceBonus, drawerSeat, firstDealerWind, handResultToTaiSync, seatOfWind } from '../utils/gameRules.js'
-import { dispatchGame, hydrateGame, resetRoom, setTai } from '../hooks/useRoom.js'
+import { claimSeat, dispatchGame, hydrateGame, resetRoom, setTai } from '../hooks/useRoom.js'
 
 const SEAT_PICK_LABELS = ['下方', '右邊', '上方', '左邊']
 const REL_CLASS = ['bottom', 'right', 'top', 'left']
 
-export default function GameMode({ room, roomCode, mySeat, onLeave }) {
+export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
   const state = room.game
+  const claims = room.claims || {}
+  const amHost = room.host === uid
+
+  const [viewerOverride, setViewerOverride] = useState(null)
+  const [manual, setManual] = useState('')
   const [winPickerOpen, setWinPickerOpen] = useState(false)
   const [pendingWinChoice, setPendingWinChoice] = useState(null)
   const [drawConfirmOpen, setDrawConfirmOpen] = useState(false)
@@ -32,10 +37,19 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [drawConfirmOpen])
 
+  // 我能操作哪些座位：自己認領的，或（身為房主）尚未被別人認領的
+  const controllable = (seat) => claims[seat] === uid || (claims[seat] == null && amHost)
+  const controllableSeats = [0, 1, 2, 3].filter(controllable)
+  const canAct = controllableSeats.length > 0
+
   const eastPlayer = state.windOfPlayer.indexOf(0)
   const dealerPlayer = state.dealerWind === null ? -1 : state.windOfPlayer.indexOf(state.dealerWind)
-  // 觀戰者（沒認領座位）視角預設看莊家
-  const viewerPlayer = mySeat != null ? mySeat : dealerPlayer >= 0 ? dealerPlayer : 0
+
+  let viewerPlayer
+  if (viewerOverride != null && controllable(viewerOverride)) viewerPlayer = viewerOverride
+  else if (mySeat != null) viewerPlayer = mySeat
+  else if (controllableSeats.length) viewerPlayer = controllableSeats[0]
+  else viewerPlayer = dealerPlayer >= 0 ? dealerPlayer : 0
 
   const seated = state.seatOfPlayer.every((s) => s !== null)
   const players = seated
@@ -48,17 +62,29 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
 
   function rollDice() {
     const dice = [1, 2, 3].map(() => Math.floor(Math.random() * 6) + 1)
-    const total = dice.reduce((sum, n) => sum + n, 0)
-    dispatch({ type: 'SET_ROLL', total, dice })
+    dispatch({ type: 'SET_ROLL', total: dice.reduce((s, n) => s + n, 0), dice })
+    setManual('')
+  }
+
+  function submitManual(v) {
+    setManual(v)
+    const total = Number(v)
+    if (Number.isInteger(total) && total >= 3 && total <= 18) dispatch({ type: 'SET_ROLL', total, dice: null })
   }
 
   function resetGame() {
-    if (window.confirm('確定要重新開桌嗎？目前的牌局紀錄會清空（座位保留）。')) {
-      resetRoom(roomCode)
+    if (window.confirm('確定要重新開桌嗎？目前的牌局紀錄會清空（座位保留）。')) resetRoom(roomCode)
+  }
+
+  async function claimMySeat(seat) {
+    try {
+      await claimSeat(roomCode, seat, uid, state.names[seat] || `玩家${seat + 1}`)
+      setViewerOverride(seat)
+    } catch (e) {
+      window.alert(e.message || '這個座位已被選走')
     }
   }
 
-  // 胡牌／流局結算後，把莊家連莊、骰子加成、自摸等資訊寫進共享的計算台數狀態
   async function syncTaiFromResult(txnResult) {
     const game = hydrateGame(txnResult?.snapshot?.val())
     const sync = handResultToTaiSync(game.lastHandResult, game.names)
@@ -78,21 +104,18 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
     setPendingWinChoice(null)
     setWinPickerOpen(true)
   }
-
   function cancelWinPicker() {
     setWinPickerOpen(false)
     setPendingWinChoice(null)
   }
-
   async function confirmWin() {
-    if (pendingWinChoice === null || mySeat == null) return
+    if (pendingWinChoice === null) return
     const loser = pendingWinChoice === 'self' ? null : pendingWinChoice
-    const res = await dispatch({ type: 'WIN_HAND', winner: mySeat, loser, selfDraw: pendingWinChoice === 'self' })
+    const res = await dispatch({ type: 'WIN_HAND', winner: viewerPlayer, loser, selfDraw: pendingWinChoice === 'self' })
     setWinPickerOpen(false)
     setPendingWinChoice(null)
     await syncTaiFromResult(res)
   }
-
   async function confirmDraw() {
     const res = await dispatch({ type: 'DRAW_HAND' })
     setDrawConfirmOpen(false)
@@ -102,51 +125,89 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
   const diceField = (labelText) => (
     <div className="field">
       <label>{labelText}</label>
-      <button type="button" className="dice-roll-button dice-roll-button--full" onClick={rollDice}>
-        🎲 擲骰子
-      </button>
+      <div className="dice-input-row">
+        <input
+          type="number"
+          min="3"
+          max="18"
+          className="field__input"
+          placeholder="手動輸入總和"
+          value={manual}
+          onChange={(e) => submitManual(e.target.value)}
+        />
+        <button type="button" className="dice-roll-button" onClick={rollDice}>
+          🎲 擲骰子
+        </button>
+      </div>
     </div>
   )
 
   const bonus = state.lastRollDice && diceBonus(state.lastRollDice)
-  const rollDetail = state.lastRollDice && (
+  const rollDetail = state.lastRollTotal != null && (
     <p className="dice-roll-result">
-      🎲 {state.lastRollDice.join(' + ')} ＝ {state.lastRollTotal}
-      {bonus && (
-        <span className="dice-bonus-badge">
-          {bonus.label} {bonus.detail}
-        </span>
-      )}
+      🎲 {state.lastRollDice ? `${state.lastRollDice.join(' + ')} ＝ ` : '總和 '}
+      {state.lastRollTotal}
+      {bonus && <span className="dice-bonus-badge">{bonus.label} {bonus.detail}</span>}
     </p>
   )
 
   const roomBar = (
     <div className="room-bar">
       <span className="room-bar__code">房號 {roomCode}</span>
-      {mySeat != null && <span className="room-bar__me">你是 {state.names[mySeat]}</span>}
+      {mySeat != null ? (
+        <span className="room-bar__me">你是 {state.names[mySeat]}</span>
+      ) : amHost ? (
+        <span className="room-bar__me">開桌者</span>
+      ) : null}
       <button type="button" className="room-bar__leave" onClick={onLeave}>
         離開
       </button>
     </div>
   )
 
-  // ── 抽風位 ──（輪到自己時才能抽）
+  // 還沒認領座位、也不是房主 → 讓他先挑一個座位
+  const claimPrompt = !canAct && (
+    <div className="claim-prompt">
+      <p className="claim-prompt__title">選擇你的座位（你是哪一位？）</p>
+      <div className="claim-prompt__grid">
+        {[0, 1, 2, 3].map((seat) =>
+          claims[seat] ? null : (
+            <button key={seat} type="button" className="game-btn game-btn--ghost" onClick={() => claimMySeat(seat)}>
+              我是 {state.names[seat]}
+            </button>
+          ),
+        )}
+      </div>
+    </div>
+  )
+
+  // 視角切換（只在我能操作多個座位時出現，例如房主一人控多家）
+  const viewerSwitch = controllableSeats.length > 1 && (
+    <div className="viewer-switch">
+      <span className="viewer-switch__label">目前操作</span>
+      {controllableSeats.map((seat) => (
+        <button key={seat} type="button" className={seat === viewerPlayer ? 'active' : ''} onClick={() => setViewerOverride(seat)}>
+          {state.names[seat]}
+        </button>
+      ))}
+    </div>
+  )
+
+  // ── 抽風位 ──
   if (state.phase === 'draw') {
-    const myTurn = mySeat != null && state.drawTurn === mySeat
+    const myTurn = controllable(state.drawTurn)
     return (
       <section className="panel">
         {roomBar}
+        {claimPrompt}
         <h2 className="panel__title">🎴 抽風位（1/3）</h2>
+        {viewerSwitch}
         {state.drawTurn <= 3 ? (
           <p className="game-prompt">
             {myTurn ? (
-              <>
-                輪到你了，<strong>{state.names[state.drawTurn]}</strong> 請點一張蓋牌（{state.drawTurn + 1}／4）
-              </>
+              <>輪到 <strong>{state.names[state.drawTurn]}</strong> 點一張蓋牌（{state.drawTurn + 1}／4）</>
             ) : (
-              <>
-                等待 <strong>{state.names[state.drawTurn]}</strong> 抽風位（{state.drawTurn + 1}／4）
-              </>
+              <>等待 <strong>{state.names[state.drawTurn]}</strong> 抽風位（{state.drawTurn + 1}／4）</>
             )}
           </p>
         ) : (
@@ -173,7 +234,7 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
             ),
           )}
         </div>
-        {state.drawTurn > 3 && (
+        {state.drawTurn > 3 && controllable(eastPlayer) && (
           <button type="button" className="game-btn game-btn--primary game-btn--full" onClick={() => dispatch({ type: 'GO_PICK_SEAT' })}>
             下一步：東風玩家選座位
           </button>
@@ -185,16 +246,18 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
     )
   }
 
-  // ── 東風選座 ──（只有東風玩家能選）
+  // ── 東風選座 ──
   if (state.phase === 'seat') {
-    const isEast = mySeat === eastPlayer
+    const canPick = controllable(eastPlayer)
     return (
       <section className="panel">
         {roomBar}
+        {claimPrompt}
         <h2 className="panel__title">🪑 選擇座位（2/3）</h2>
+        {viewerSwitch}
         <p className="game-prompt">
-          {isEast ? (
-            <>請 <strong>{state.names[eastPlayer]}</strong>（你，抽到東風）選擇想坐的位子</>
+          {canPick ? (
+            <>請 <strong>{state.names[eastPlayer]}</strong>（東風）選擇想坐的位子</>
           ) : (
             <>等待 <strong>{state.names[eastPlayer]}</strong>（東風）選位子</>
           )}
@@ -206,7 +269,7 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
               key={s}
               type="button"
               className={`seat-table__seat seat-table__seat--${REL_CLASS[s]} seat-table__seat--pick`}
-              disabled={!isEast}
+              disabled={!canPick}
               onClick={() => dispatch({ type: 'PICK_SEAT', seat: s })}
             >
               {SEAT_PICK_LABELS[s]}
@@ -220,9 +283,9 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
     )
   }
 
-  // ── 擲骰定第一個莊家 ──（只有東風玩家能擲、能確認）
+  // ── 擲骰定第一個莊家 ──
   if (state.phase === 'first-dealer') {
-    const isEast = mySeat === eastPlayer
+    const canRoll = controllable(eastPlayer)
     const rolled = state.lastRollTotal !== null
     const firstWind = rolled ? firstDealerWind(state.lastRollTotal) : null
     const firstPlayer = rolled ? state.windOfPlayer.indexOf(firstWind) : -1
@@ -230,32 +293,22 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
     return (
       <section className="panel">
         {roomBar}
+        {claimPrompt}
         <h2 className="panel__title">🎲 擲骰定莊（3/3）</h2>
+        {viewerSwitch}
         <p className="game-prompt">
-          {isEast ? (
-            <>四家已就座！請由你（<strong>{state.names[eastPlayer]}</strong>，東風）擲骰子</>
+          {canRoll ? (
+            <>請 <strong>{state.names[eastPlayer]}</strong>（東風）擲骰子</>
           ) : (
             <>等待 <strong>{state.names[eastPlayer]}</strong>（東風）擲骰定莊</>
           )}
         </p>
-        {isEast ? diceField('骰子點數總和') : <div className="waiting-note">🎲 等待莊家擲骰…</div>}
+        {canRoll ? diceField('骰子點數總和') : <div className="waiting-note">🎲 等待東風擲骰…</div>}
         {rollDetail}
-        <GameSeatTable
-          players={players}
-          viewerSeat={state.seatOfPlayer[viewerPlayer]}
-          dealerSeat={null}
-          highlightSeat={highlight}
-          centerText="東"
-        />
-        {rolled && (
-          <div className="banner banner--success">👑 {state.names[firstPlayer]}（{WINDS[firstWind]}風）為第一個莊家！</div>
-        )}
-        {rolled && isEast && (
-          <button
-            type="button"
-            className="game-btn game-btn--primary game-btn--full"
-            onClick={() => dispatch({ type: 'CONFIRM_FIRST_DEALER' })}
-          >
+        <GameSeatTable players={players} viewerSeat={state.seatOfPlayer[viewerPlayer]} dealerSeat={null} highlightSeat={highlight} centerText="東" />
+        {rolled && <div className="banner banner--success">👑 {state.names[firstPlayer]}（{WINDS[firstWind]}風）為第一個莊家！</div>}
+        {rolled && canRoll && (
+          <button type="button" className="game-btn game-btn--primary game-btn--full" onClick={() => dispatch({ type: 'CONFIRM_FIRST_DEALER' })}>
             開始對局（東風圈）
           </button>
         )}
@@ -272,12 +325,12 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
   const rolled = state.lastRollTotal !== null
   const drawSeat = rolled ? drawerSeat(dealerSeat, state.lastRollTotal) : null
   const drawPlayer = drawSeat !== null ? state.seatOfPlayer.indexOf(drawSeat) : -1
-  const isDealer = mySeat === dealerPlayer
-  const canAct = mySeat != null
+  const canRoll = controllable(dealerPlayer)
 
   return (
     <section className="panel">
       {roomBar}
+      {claimPrompt}
       <h2 className="panel__title">🀅 對局中</h2>
 
       <div className="game-status">
@@ -286,25 +339,15 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
         <span className="game-chip game-chip--dealer">👑 莊家：{state.names[dealerPlayer]}</span>
       </div>
 
-      {isDealer ? (
-        diceField(`骰子點數總和（你是莊家 ${state.names[dealerPlayer]}）`)
-      ) : (
-        <div className="waiting-note">🎲 等待莊家 {state.names[dealerPlayer]} 擲骰…</div>
-      )}
+      {viewerSwitch}
+
+      {canRoll ? diceField(`骰子點數總和（莊家 ${state.names[dealerPlayer]}）`) : <div className="waiting-note">🎲 等待莊家 {state.names[dealerPlayer]} 擲骰…</div>}
       {rollDetail}
 
-      <GameSeatTable
-        players={players}
-        viewerSeat={viewerSeat}
-        dealerSeat={dealerSeat}
-        highlightSeat={drawSeat}
-        centerText={WINDS[state.roundWind]}
-      />
+      <GameSeatTable players={players} viewerSeat={viewerSeat} dealerSeat={dealerSeat} highlightSeat={drawSeat} centerText={WINDS[state.roundWind]} />
 
       {drawPlayer >= 0 && (
-        <div className="banner banner--success">
-          由「{state.names[drawPlayer]}」從倒數 {18 - state.lastRollTotal} 張開始抓牌！
-        </div>
+        <div className="banner banner--success">由「{state.names[drawPlayer]}」從倒數 {18 - state.lastRollTotal} 張開始抓牌！</div>
       )}
 
       {winPickerOpen && (
@@ -351,7 +394,7 @@ export default function GameMode({ room, roomCode, mySeat, onLeave }) {
 
       {canAct && !winPickerOpen && !drawConfirmOpen && (
         <button type="button" className="game-btn game-btn--primary game-btn--full" onClick={openWinPicker}>
-          🀄 我胡了
+          🀄 {controllableSeats.length > 1 ? `${state.names[viewerPlayer]} 胡了` : '我胡了'}
         </button>
       )}
 

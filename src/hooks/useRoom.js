@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { get, onValue, ref, runTransaction, set, update } from 'firebase/database'
 import { db } from '../firebase.js'
-import { createInitialState, gameReducer } from '../utils/gameRules.js'
+import { createDiceState, createInitialState, diceReducer, gameReducer } from '../utils/gameRules.js'
 
 // Firebase 即時資料庫不會儲存 null，陣列中的 null 會被丟掉、造成長度縮短或變成物件，
 // 因此讀取後一律用這個函式把牌局狀態補回完整形狀（4 格陣列、缺項補 null / 預設值）。
@@ -62,10 +62,22 @@ export function hydrateTai(raw) {
   }
 }
 
+export function hydrateDice(raw) {
+  const base = createDiceState()
+  if (!raw) return base
+  return {
+    ...base,
+    ...raw,
+    names: fix4(raw.names, '').map((n, i) => (n === '' || n == null ? `玩家${i + 1}` : n)),
+    lastRollDice: raw.lastRollDice ? toArray(raw.lastRollDice) : null,
+  }
+}
+
 function initialRoom() {
   return {
     game: createInitialState(),
     tai: initialTai(),
+    dice: createDiceState(),
     funds: [0, 0, 0, 0],
     settledHandId: null,
     claims: {},
@@ -73,13 +85,13 @@ function initialRoom() {
   }
 }
 
-// 產生一個沒被用過的 4 碼房號並建立房間
-export async function createRoom() {
+// 產生一個沒被用過的 4 碼房號並建立房間；hostUid 記為房主，之後可操作未被認領的座位
+export async function createRoom(hostUid) {
   for (let attempt = 0; attempt < 12; attempt++) {
     const code = String(Math.floor(1000 + Math.random() * 9000))
     const snap = await get(ref(db, `rooms/${code}`))
     if (!snap.exists()) {
-      await set(ref(db, `rooms/${code}`), initialRoom())
+      await set(ref(db, `rooms/${code}`), { ...initialRoom(), host: hostUid || null })
       return code
     }
   }
@@ -117,6 +129,11 @@ export function setPlayerName(roomCode, seat, name) {
 export function dispatchGame(roomCode, action) {
   const gameRef = ref(db, `rooms/${roomCode}/game`)
   return runTransaction(gameRef, (cur) => gameReducer(hydrateGame(cur), action))
+}
+
+export function dispatchDice(roomCode, action) {
+  const diceRef = ref(db, `rooms/${roomCode}/dice`)
+  return runTransaction(diceRef, (cur) => diceReducer(hydrateDice(cur), action))
 }
 
 export function patchTai(roomCode, partial) {
@@ -176,9 +193,11 @@ export function useRoom(roomCode) {
           ? {
               game: hydrateGame(raw.game),
               tai: hydrateTai(raw.tai),
+              dice: hydrateDice(raw.dice),
               funds: toArray(raw.funds).length === 4 ? toArray(raw.funds) : [0, 0, 0, 0],
               settledHandId: raw.settledHandId ?? null,
               claims: raw.claims || {},
+              host: raw.host ?? null,
             }
           : null,
       })
