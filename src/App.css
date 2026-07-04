@@ -156,13 +156,10 @@
   gap: 8px;
 }
 
-.dice-input-row .field__input {
-  flex: 1;
-  min-width: 0;
-}
-
+.dice-input-row .field__input,
 .dice-input-row .dice-roll-button {
-  flex: none;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .dice-dealer-pick {
@@ -241,6 +238,21 @@
 
 .name-editor .game-names {
   margin: 0;
+}
+
+.name-editor__error {
+  text-align: center;
+  color: var(--red-dark);
+  font-size: 12px;
+  font-weight: 700;
+  margin: 8px 0 0;
+}
+
+.name-editor__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .dice-roll-result {
@@ -1069,6 +1081,11 @@
   color: #fff;
   background: linear-gradient(135deg, var(--gold) 0%, var(--red) 100%);
   border-color: transparent;
+}
+
+.game-dealer-indicator--full {
+  width: 100%;
+  margin-top: 12px;
 }
 
 .game-status {

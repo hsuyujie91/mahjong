@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import GameSeatTable from './GameSeatTable.jsx'
 import { WINDS, diceBonus, drawerSeat, firstDealerWind, handResultToTaiSync, seatOfWind } from '../utils/gameRules.js'
-import { claimSeat, dispatchGame, hydrateGame, resetRoom, setPlayerName, setTai } from '../hooks/useRoom.js'
+import NameEditor from './NameEditor.jsx'
+import { dispatchGame, hydrateGame, resetRoom, setPlayerName, setTai } from '../hooks/useRoom.js'
 
 const SEAT_PICK_LABELS = ['下方', '右邊', '上方', '左邊']
 const REL_CLASS = ['bottom', 'right', 'top', 'left']
 
-export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
+export default function GameMode({ room, roomCode, mySeat, onLeave }) {
   const state = room.game
-  const claims = room.claims || {}
-  const amHost = room.host === uid
 
   const [viewerOverride, setViewerOverride] = useState(null)
   const [manual, setManual] = useState('')
@@ -38,10 +37,10 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [drawConfirmOpen])
 
-  // 我能操作哪些座位：自己認領的，或（身為房主）尚未被別人認領的
-  const controllable = (seat) => claims[seat] === uid || (claims[seat] == null && amHost)
+  // 有認領座位的人只操作自己那家（鎖定自己視角）；沒認領的人可操作全部座位（一支手機全包）
+  const controllable = (seat) => (mySeat == null ? true : seat === mySeat)
   const controllableSeats = [0, 1, 2, 3].filter(controllable)
-  const canAct = controllableSeats.length > 0
+  const canAct = true
 
   const eastPlayer = state.windOfPlayer.indexOf(0)
   const dealerPlayer = state.dealerWind === null ? -1 : state.windOfPlayer.indexOf(state.dealerWind)
@@ -49,8 +48,7 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
   let viewerPlayer
   if (viewerOverride != null && controllable(viewerOverride)) viewerPlayer = viewerOverride
   else if (mySeat != null) viewerPlayer = mySeat
-  else if (controllableSeats.length) viewerPlayer = controllableSeats[0]
-  else viewerPlayer = dealerPlayer >= 0 ? dealerPlayer : 0
+  else viewerPlayer = 0
 
   const seated = state.seatOfPlayer.every((s) => s !== null)
   const players = seated
@@ -75,15 +73,6 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
 
   function resetGame() {
     if (window.confirm('確定要重新開桌嗎？目前的牌局紀錄會清空（座位保留）。')) resetRoom(roomCode)
-  }
-
-  async function claimMySeat(seat) {
-    try {
-      await claimSeat(roomCode, seat, uid, state.names[seat] || `玩家${seat + 1}`)
-      setViewerOverride(seat)
-    } catch (e) {
-      window.alert(e.message || '這個座位已被選走')
-    }
   }
 
   async function syncTaiFromResult(txnResult) {
@@ -157,9 +146,9 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
       <span className="room-bar__code">房號 {roomCode}</span>
       {mySeat != null ? (
         <span className="room-bar__me">你是 {state.names[mySeat]}</span>
-      ) : amHost ? (
-        <span className="room-bar__me">開桌者</span>
-      ) : null}
+      ) : (
+        <span className="room-bar__me">可操作全部</span>
+      )}
       <button type="button" className="room-bar__action" onClick={() => setNameEditOpen((v) => !v)}>
         ✏️ 改名
       </button>
@@ -170,40 +159,14 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
   )
 
   const nameEditor = nameEditOpen && (
-    <div className="name-editor">
-      <p className="name-editor__title">改暱稱（任何人都能改所有人的）</p>
-      <div className="game-names">
-        {state.names.map((n, i) => (
-          <input
-            key={i}
-            className="field__input"
-            value={n}
-            maxLength={8}
-            onChange={(e) => setPlayerName(roomCode, i, e.target.value)}
-            placeholder={`玩家${i + 1}`}
-          />
-        ))}
-      </div>
-    </div>
+    <NameEditor
+      names={state.names}
+      onSave={(names) => names.forEach((n, i) => setPlayerName(roomCode, i, n))}
+      onClose={() => setNameEditOpen(false)}
+    />
   )
 
-  // 還沒認領座位、也不是房主 → 讓他先挑一個座位
-  const claimPrompt = !canAct && (
-    <div className="claim-prompt">
-      <p className="claim-prompt__title">選擇你的座位（你是哪一位？）</p>
-      <div className="claim-prompt__grid">
-        {[0, 1, 2, 3].map((seat) =>
-          claims[seat] ? null : (
-            <button key={seat} type="button" className="game-btn game-btn--ghost" onClick={() => claimMySeat(seat)}>
-              我是 {state.names[seat]}
-            </button>
-          ),
-        )}
-      </div>
-    </div>
-  )
-
-  // 視角切換（只在我能操作多個座位時出現，例如房主一人控多家）
+  // 視角切換（沒認領座位的人可操作多家時出現）
   const viewerSwitch = controllableSeats.length > 1 && (
     <div className="viewer-switch">
       <span className="viewer-switch__label">目前操作</span>
@@ -221,7 +184,6 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
     return (
       <section className="panel">
         {roomBar}
-        {claimPrompt}
         {nameEditor}
         <h2 className="panel__title">🎴 抽風位（1/3）</h2>
         {viewerSwitch}
@@ -275,7 +237,6 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
     return (
       <section className="panel">
         {roomBar}
-        {claimPrompt}
         {nameEditor}
         <h2 className="panel__title">🪑 選擇座位（2/3）</h2>
         {viewerSwitch}
@@ -316,7 +277,6 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
     return (
       <section className="panel">
         {roomBar}
-        {claimPrompt}
         {nameEditor}
         <h2 className="panel__title">🎲 擲骰定莊（3/3）</h2>
         {viewerSwitch}
@@ -347,7 +307,6 @@ export default function GameMode({ room, roomCode, uid, mySeat, onLeave }) {
   return (
     <section className="panel">
       {roomBar}
-      {claimPrompt}
       {nameEditor}
       <h2 className="panel__title">🀅 對局中</h2>
 

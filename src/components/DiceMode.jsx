@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import GameSeatTable from './GameSeatTable.jsx'
-import { WINDS, createDiceState, diceBonus, drawerSeat, seatWind } from '../utils/gameRules.js'
+import NameEditor from './NameEditor.jsx'
+import { WINDS, diceBonus, drawerSeat, seatWind } from '../utils/gameRules.js'
 import { dispatchDice } from '../hooks/useRoom.js'
-
-const SEAT_LABELS = ['下方', '右邊', '上方', '左邊']
 
 export default function DiceMode({ room, roomCode }) {
   const dice = room.dice
@@ -81,21 +80,11 @@ export default function DiceMode({ room, roomCode }) {
       </div>
 
       {nameEditOpen && (
-        <div className="name-editor">
-          <p className="name-editor__title">改暱稱（任何人都能改所有人的）</p>
-          <div className="game-names">
-            {dice.names.map((n, i) => (
-              <input
-                key={i}
-                className="field__input"
-                value={n}
-                maxLength={8}
-                onChange={(e) => dispatch({ type: 'DICE_SET_NAME', index: i, name: e.target.value })}
-                placeholder={`玩家${i + 1}`}
-              />
-            ))}
-          </div>
-        </div>
+        <NameEditor
+          names={dice.names}
+          onSave={(names) => names.forEach((n, i) => dispatch({ type: 'DICE_SET_NAME', index: i, name: n }))}
+          onClose={() => setNameEditOpen(false)}
+        />
       )}
 
       <div className="field">
@@ -138,15 +127,9 @@ export default function DiceMode({ room, roomCode }) {
 
       {drawSeat !== null && (
         <div className="banner banner--success">
-          由「{dice.names[drawSeat]}」（{SEAT_LABELS[drawSeat]}）從倒數 {18 - dice.lastRollTotal} 張開始抓牌！
+          由「{dice.names[drawSeat]}」從倒數 {18 - dice.lastRollTotal} 張開始抓牌！
         </div>
       )}
-
-      <div className="game-actions">
-        <div className={`game-dealer-indicator ${dice.dealerStreak > 1 ? 'game-dealer-indicator--lit' : ''}`}>
-          👑 連莊{dice.dealerStreak}次
-        </div>
-      </div>
 
       <div className="dice-buttons">
         <button type="button" className="game-btn game-btn--primary" onClick={() => dispatch({ type: 'DICE_STAY' })}>
@@ -158,6 +141,10 @@ export default function DiceMode({ room, roomCode }) {
         <button type="button" className="game-btn game-btn--ghost" onClick={() => dispatch({ type: 'DICE_PASS' })}>
           🔄 下莊
         </button>
+      </div>
+
+      <div className={`game-dealer-indicator game-dealer-indicator--full ${dice.dealerStreak > 1 ? 'game-dealer-indicator--lit' : ''}`}>
+        👑 連莊{dice.dealerStreak}次
       </div>
 
       <div className="game-reset">
